@@ -1,0 +1,15 @@
+{
+    "required": true,
+    "package": "com.gardenprofit.mod.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "refmap": "gardenprofit-refmap.json",
+    "mixins": [
+        "AccessorInventory"
+    ],
+    "client": [
+        "PlayerTabOverlayAccessor"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
+}
