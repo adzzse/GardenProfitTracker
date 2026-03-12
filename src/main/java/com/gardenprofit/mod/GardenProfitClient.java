@@ -15,6 +15,8 @@ public class GardenProfitClient implements ClientModInitializer {
 
     private static int tickCounter = 0;
 
+    private static boolean openConfigScreenNextTick = false;
+
     @Override
     public void onInitializeClient() {
         GardenProfitConfig.load();
@@ -23,9 +25,7 @@ public class GardenProfitClient implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
             dispatcher.register(ClientCommandManager.literal("gardenprofit")
                 .executes(context -> {
-                    Minecraft.getInstance().execute(() -> {
-                        Minecraft.getInstance().setScreen(com.gardenprofit.mod.gui.HudEditScreen.create(null));
-                    });
+                    openConfigScreenNextTick = true;
                     return 1;
                 })
             );
@@ -43,6 +43,12 @@ public class GardenProfitClient implements ClientModInitializer {
 
         // Register tick event for profit updates
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (openConfigScreenNextTick) {
+                openConfigScreenNextTick = false;
+                net.minecraft.client.gui.screens.Screen screen = com.gardenprofit.mod.gui.HudEditScreen.create(client.screen);
+                client.setScreen(screen);
+            }
+
             if (client.player == null) return;
 
             tickCounter++;
