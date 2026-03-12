@@ -1,8 +1,10 @@
 package com.gardenprofit.mod;
 
 import com.gardenprofit.mod.gui.ProfitHudRenderer;
+import com.gardenprofit.mod.modules.InventoryTracker;
 import com.gardenprofit.mod.modules.PetXpTracker;
 import com.gardenprofit.mod.modules.ProfitManager;
+import com.gardenprofit.mod.modules.SackTracker;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
@@ -35,13 +37,16 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitHudRenderer.register();
         ProfitHudRenderer.startSession();
 
-        // Register chat message listener for profit tracking
+        // Register chat message listener for profit tracking + sack tracking
         ClientReceiveMessageEvents.GAME.register((message, isOverlay) -> {
             if (isOverlay) return;
+            // Try sack tracking first (precise crop data from hover text)
+            SackTracker.handleChatMessage(message);
+            // Then handle other chat-based tracking (pest drops, rare drops, etc.)
             ProfitManager.handleChatMessage(message);
         });
 
-        // Register tick event for profit updates
+        // Register tick event for profit updates and inventory tracking
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (openConfigScreenNextTick) {
                 openConfigScreenNextTick = false;
@@ -52,7 +57,11 @@ public class GardenProfitClient implements ClientModInitializer {
             if (client.player == null) return;
 
             tickCounter++;
-            // Update profit every 5 ticks
+
+            // Inventory diff tracking every tick for non-sack items
+            InventoryTracker.tick(client);
+
+            // Update profit (purse tracking) every 5 ticks
             if (tickCounter % 5 == 0) {
                 ProfitManager.update(client);
             }

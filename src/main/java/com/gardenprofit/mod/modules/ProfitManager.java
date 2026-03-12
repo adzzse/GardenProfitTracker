@@ -1,7 +1,6 @@
 package com.gardenprofit.mod.modules;
 
 import com.gardenprofit.mod.GardenProfitConfig;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import java.util.LinkedHashMap;
@@ -16,12 +15,9 @@ public class ProfitManager {
     private static final Map<String, Long> sessionCounts = new LinkedHashMap<>();
     private static final Map<String, Long> dailyCounts = new LinkedHashMap<>();
     private static final Map<String, Long> lifetimeCounts = new LinkedHashMap<>();
-    private static final Map<String, Long> prevInventoryCounts = new LinkedHashMap<>();
     private static final Map<String, Double> bazaarPrices = new LinkedHashMap<>();
     private static final Map<String, Long> petLvl1Prices = new java.util.HashMap<>();
     private static final Map<String, Long> petMaxLvlPrices = new java.util.HashMap<>();
-    private static long lastCultivatingValue = -1;
-    private static String currentFarmedCrop = "Wheat";
     private static long lastBazaarFetchTime = 0;
     private static long lastPurseBalance = -1;
     private static String lastDailyResetDate = getCurrentDateString();
@@ -509,6 +505,20 @@ public class ProfitManager {
         saveDaily();
     }
 
+    /**
+     * Called by SackTracker when items are added to sacks (from farming).
+     */
+    public static void addSackDrop(String itemName, long count) {
+        addDrop(itemName, count);
+    }
+
+    /**
+     * Called by InventoryTracker when non-sack items appear in inventory.
+     */
+    public static void addInventoryDrop(String itemName, long count) {
+        addDrop(itemName, count);
+    }
+
     public static void addVisitorGain(String itemName, long count) {
         String cleanName = STRIP_COLOR_PATTERN.matcher(itemName).replaceAll("").replace("+", "").trim();
         long multiplier = 1;
@@ -909,81 +919,7 @@ public class ProfitManager {
         if (client.player == null)
             return;
 
-        // 1. Detect which crop increased in inventory
-        String detectedCrop = null;
-        long maxIncrease = 0;
-
-        Map<String, Long> currentCounts = new LinkedHashMap<>();
-        for (int i = 0; i < 36; i++) {
-            net.minecraft.world.item.ItemStack stack = client.player.getInventory().getItem(i);
-            if (stack == null || stack.isEmpty())
-                continue;
-            String name = stack.getHoverName().getString().replaceAll("\u00A7[0-9a-fk-or]", "").trim();
-            if (BASE_CROPS.contains(name)) {
-                currentCounts.put(name, currentCounts.getOrDefault(name, 0L) + stack.getCount());
-            }
-        }
-
-        for (Map.Entry<String, Long> entry : currentCounts.entrySet()) {
-            String name = entry.getKey();
-            long count = entry.getValue();
-            long prev = prevInventoryCounts.getOrDefault(name, 0L);
-            if (count > prev) {
-                long diff = count - prev;
-                if (diff > maxIncrease) {
-                    maxIncrease = diff;
-                    detectedCrop = name;
-                }
-            }
-        }
-        prevInventoryCounts.clear();
-        prevInventoryCounts.putAll(currentCounts);
-
-        if (detectedCrop != null) {
-            currentFarmedCrop = detectedCrop;
-        }
-
-        // 2. Track Cultivating counter on held item
-        net.minecraft.world.item.ItemStack held = client.player.getMainHandItem();
-        if (held != null && !held.isEmpty()) {
-            long newValue = -1;
-
-            // Hypixel 1.21 stores this in custom_data
-            net.minecraft.world.item.component.CustomData custom = held.get(DataComponents.CUSTOM_DATA);
-            if (custom != null) {
-                net.minecraft.nbt.CompoundTag tag = custom.copyTag();
-                if (tag.contains("farmed_cultivating")) {
-                    newValue = tag.getLong("farmed_cultivating").get();
-                }
-            }
-
-            if (newValue != -1) {
-                if (lastCultivatingValue != -1 && newValue > lastCultivatingValue) {
-                    long delta = newValue - lastCultivatingValue;
-                    if (currentFarmedCrop != null) {
-                        if (currentFarmedCrop.equalsIgnoreCase("Wheat")
-                                || currentFarmedCrop.equalsIgnoreCase("Seeds")) {
-                            // Ratio 1 Wheat : 1.5 Seeds (Total 2.5)
-                            long wheatDelta = Math.round(delta / 2.5);
-                            long seedsDelta = delta - wheatDelta;
-                            if (wheatDelta > 0)
-                                addDrop("Wheat", wheatDelta);
-                            if (seedsDelta > 0)
-                                addDrop("Seeds", seedsDelta);
-                        } else {
-                            addDrop(currentFarmedCrop, delta);
-                        }
-                    }
-                }
-                lastCultivatingValue = newValue;
-            } else {
-                lastCultivatingValue = -1;
-            }
-        } else {
-            lastCultivatingValue = -1;
-        }
-
-        // 3. Track Purse
+        // 1. Track Purse
         long currentPurse = ClientUtils.getPurse(client);
         if (currentPurse != -1) {
             if (lastPurseBalance != -1) {
