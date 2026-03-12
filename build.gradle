@@ -59,3 +59,23 @@ java {
 if (file('local.gradle').exists()) {
     apply from: 'local.gradle'
 }
+
+task bumpVersion {
+    doLast {
+        def propsFile = file('gradle.properties')
+        def propsText = propsFile.text
+        def matcher = (propsText =~ /mod_version=(v?\d+\.\d+\.)(\d+)(.*)/)
+        if (matcher.find()) {
+            def prefix = matcher.group(1)
+            def patch = (matcher.group(2) as Integer) + 1
+            def suffix = matcher.group(3)
+            def newVersionStr = "mod_version=${prefix}${patch}${suffix}"
+            propsFile.text = propsText.replace(matcher.group(0), newVersionStr)
+            println "Automatically bumped version to ${prefix}${patch}${suffix}"
+        }
+    }
+}
+
+tasks.named('build') {
+    finalizedBy bumpVersion
+}
