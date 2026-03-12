@@ -40,10 +40,17 @@ public class ProfitManager {
         }
     }
 
+    public static void resetSession() {
+        sessionCounts.clear();
+        spraySessionQuantity = 0;
+    }
+
     private static final java.io.File LIFETIME_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
             .resolve("pest_macro_profit_lifetime.json").toFile();
     private static final java.io.File DAILY_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
             .resolve("pest_macro_profit_daily.json").toFile();
+    private static final java.io.File BAZAAR_CACHE_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+            .resolve("gardenprofit_bazaar_cache.json").toFile();
     private static final com.google.gson.Gson GSON = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
 
     private static final Set<String> CROPS_SET = Set.of(
@@ -261,7 +268,7 @@ public class ProfitManager {
     private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)§[0-9A-FK-OR]");
 
     private static final Pattern BAZAAR_BUY_PATTERN = Pattern.compile(
-            "\\[Bazaar\\] Bought (\\d+)x (.+?) for [\\d,]+ coins!",
+            "\\[Bazaar\\] Bought (\\d+)x (.+?) for ([\\d,.]+) coins!",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern SPRAY_PATTERN = Pattern.compile(
             "SPRAYONATOR! You sprayed Plot - \\d+ with (.+?)(?:!|$)",
@@ -350,9 +357,11 @@ public class ProfitManager {
             try {
                 int count = Integer.parseInt(bazaarMatcher.group(1));
                 String itemName = bazaarMatcher.group(2).trim();
+                double coins = Double.parseDouble(bazaarMatcher.group(3).replace(",", ""));
                 ClientUtils.sendDebugMessage(Minecraft.getInstance(),
-                        "Bazaar buy detected: " + count + "x " + itemName);
+                        "Bazaar buy detected: " + count + "x " + itemName + " for " + coins + " coins");
                 addDrop(itemName, -count);
+                addDrop("Purse", -Math.round(coins));
                 lastBazaarSprayBuyTime = System.currentTimeMillis();
             } catch (Exception ignored) {
             }
@@ -867,6 +876,45 @@ public class ProfitManager {
         }
     }
 
+    // ── Bazaar Price Cache ──
+
+    private static void saveBazaarCache() {
+        try (java.io.FileWriter writer = new java.io.FileWriter(BAZAAR_CACHE_FILE)) {
+            BazaarCacheData data = new BazaarCacheData();
+            data.prices = new LinkedHashMap<>(bazaarPrices);
+            data.fetchTimeMs = lastBazaarFetchTime;
+            GSON.toJson(data, writer);
+            System.out.println("[GardenProfit] Bazaar cache saved to " + BAZAAR_CACHE_FILE.getName()
+                    + " (" + data.prices.size() + " prices)");
+        } catch (java.io.IOException e) {
+            System.err.println("[GardenProfit] Failed to save bazaar cache: " + e.getMessage());
+        }
+    }
+
+    public static void loadBazaarCache() {
+        if (!BAZAAR_CACHE_FILE.exists()) {
+            System.out.println("[GardenProfit] No bazaar cache file found, will fetch fresh prices.");
+            return;
+        }
+        try (java.io.FileReader reader = new java.io.FileReader(BAZAAR_CACHE_FILE)) {
+            BazaarCacheData data = GSON.fromJson(reader, BazaarCacheData.class);
+            if (data != null && data.prices != null) {
+                bazaarPrices.putAll(data.prices);
+                lastBazaarFetchTime = data.fetchTimeMs;
+                long ageMinutes = (System.currentTimeMillis() - data.fetchTimeMs) / 60_000;
+                System.out.println("[GardenProfit] Loaded " + data.prices.size()
+                        + " cached bazaar prices (age: " + ageMinutes + " min)");
+            }
+        } catch (Exception e) {
+            System.err.println("[GardenProfit] Failed to load bazaar cache: " + e.getMessage());
+        }
+    }
+
+    private static class BazaarCacheData {
+        Map<String, Double> prices;
+        long fetchTimeMs;
+    }
+
     private static class DailyData {
         Map<String, Long> counts;
         long sprayQuantity;
@@ -987,6 +1035,8 @@ public class ProfitManager {
     private static int startupPetPriceRetryCount = 3;
 
     public static void startStartupPriceFetch() {
+        // Load cached prices first for instant availability
+        loadBazaarCache();
         startupPetPriceRetryCount = 0;
         fetchBazaarPrices();
     }
@@ -994,8 +1044,13 @@ public class ProfitManager {
     private static synchronized void fetchBazaarPrices() {
         lastBazaarFetchTime = System.currentTimeMillis();
         new Thread(() -> {
+            System.out.println("[GardenProfit] Starting bazaar price fetch...");
             java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
             performFetchInternal(client);
+
+            // Save cache after successful fetch
+            saveBazaarCache();
+            System.out.println("[GardenProfit] Bazaar price fetch complete. " + bazaarPrices.size() + " prices loaded.");
 
             // Startup retry logic: if any pet price is missing, retry up to 3 times every 5
             // seconds
@@ -1026,6 +1081,8 @@ public class ProfitManager {
     }
 
     private static void performFetchInternal(java.net.http.HttpClient client) {
+        int fetched = 0;
+        int failed = 0;
         for (Map.Entry<String, String> entry : BAZAAR_MAPPING.entrySet()) {
             String itemName = entry.getKey();
             String itemTag = entry.getValue();
@@ -1042,12 +1099,19 @@ public class ProfitManager {
                     BazaarApiResponse data = GSON.fromJson(response.body(), BazaarApiResponse.class);
                     if (data != null && data.buy > 0) {
                         bazaarPrices.put(itemName, data.buy);
+                        fetched++;
+                        System.out.println("[GardenProfit] Price: " + itemName + " = " + String.format("%.1f", data.buy));
                     }
+                } else {
+                    failed++;
+                    System.err.println("[GardenProfit] HTTP " + response.statusCode() + " for " + itemName);
                 }
             } catch (Exception e) {
-                System.err.println("Failed to fetch bazaar price for " + itemName + ": " + e.getMessage());
+                failed++;
+                System.err.println("[GardenProfit] Failed to fetch price for " + itemName + ": " + e.getMessage());
             }
         }
+        System.out.println("[GardenProfit] Bazaar items: " + fetched + " fetched, " + failed + " failed.");
         // Also fetch Pet XP price
         fetchPetXpPrice(client);
     }

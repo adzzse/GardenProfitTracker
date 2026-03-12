@@ -30,6 +30,14 @@ public class GardenProfitClient implements ClientModInitializer {
                     openConfigScreenNextTick = true;
                     return 1;
                 })
+                .then(ClientCommandManager.literal("reset")
+                    .executes(context -> {
+                        ProfitManager.resetSession();
+                        ProfitHudRenderer.startSession();
+                        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
+                        return 1;
+                    })
+                )
             );
         });
 
