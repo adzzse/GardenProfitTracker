@@ -22,13 +22,18 @@ public class ProfitHudRenderer {
     private static final int ROW_HEIGHT = 11;
     private static final int CORNER_RADIUS = 6;
 
-    private static final int BG_COLOR = 0xFF141424;
-    private static final int SEP_COLOR = 0xFF4A4A88;
+    private static final int BG_COLOR_RGB = 0x141424;
+    private static final int SEP_COLOR_RGB = 0x4A4A88;
     private static final int TITLE_COLOR = 0xFFFFFFFF;
     private static final int LABEL_COLOR = 0xFFAAAAAA;
     private static final int VALUE_COLOR = 0xFFFFFFFF;
-    private static final int BORDER_IDLE = 0xFF6464B4;
+    private static final int BORDER_IDLE_RGB = 0x6464B4;
     private static final int BORDER_DRAG = 0xFFAAAAFF;
+
+    private static int applyOpacity(int rgb) {
+        int alpha = (int) (GardenProfitConfig.hudOpacity * 255) & 0xFF;
+        return (alpha << 24) | (rgb & 0x00FFFFFF);
+    }
     private static final int BORDER_RESIZE = 0xFFFFAA00;
 
     // Drag / resize state for Session HUD
@@ -268,11 +273,11 @@ public class ProfitHudRenderer {
                 dragging = isDraggingSession;
                 resizing = isResizingSession;
             }
-            int borderColor = dragging ? BORDER_DRAG : resizing ? BORDER_RESIZE : BORDER_IDLE;
+            int borderColor = dragging ? BORDER_DRAG : resizing ? BORDER_RESIZE : applyOpacity(BORDER_IDLE_RGB);
             fillRoundedRect(g, -1, -1, PANEL_W + 2, panelH + 2, CORNER_RADIUS + 1, borderColor);
         }
 
-        fillRoundedRect(g, 0, 0, PANEL_W, panelH, CORNER_RADIUS, BG_COLOR);
+        fillRoundedRect(g, 0, 0, PANEL_W, panelH, CORNER_RADIUS, applyOpacity(BG_COLOR_RGB));
 
         String title;
         if ("daily".equals(mode)) {
@@ -287,7 +292,7 @@ public class ProfitHudRenderer {
         g.drawString(client.font, title, titleAnchorX, PADDING_V, TITLE_COLOR, false);
 
         int rowY = PADDING_V + FONT_H + 3;
-        g.fill(PADDING_H, rowY, PANEL_W - PADDING_H, rowY + 1, SEP_COLOR);
+        g.fill(PADDING_H, rowY, PANEL_W - PADDING_H, rowY + 1, applyOpacity(SEP_COLOR_RGB));
         rowY += 4;
 
         if (GardenProfitConfig.compactProfitCalculator) {
@@ -337,7 +342,7 @@ public class ProfitHudRenderer {
 
         // Total Profit row
         if (rowY > PADDING_V + FONT_H + 3 + 4) {
-            g.fill(PADDING_H, rowY + 1, PANEL_W - PADDING_H, rowY + 2, SEP_COLOR);
+            g.fill(PADDING_H, rowY + 1, PANEL_W - PADDING_H, rowY + 2, applyOpacity(SEP_COLOR_RGB));
             rowY += 4;
             long total = ProfitManager.getTotalProfit(mode);
             drawRow(g, client, rowY, "Total Profit", formatProfit(total), 0xFFFFAA00);

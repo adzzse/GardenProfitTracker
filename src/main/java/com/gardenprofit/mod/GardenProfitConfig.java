@@ -17,6 +17,7 @@ public class GardenProfitConfig {
     // Profit HUD Defaults
     public static final boolean DEFAULT_COMPACT_PROFIT_CALCULATOR = false;
     public static final boolean DEFAULT_SHOW_DEBUG = false;
+    public static final float DEFAULT_HUD_OPACITY = 0.85f;
 
     // Pet Tracker Defaults
     public static final java.util.List<String> DEFAULT_PET_TRACKER_LIST = java.util.Arrays.asList(
@@ -42,6 +43,7 @@ public class GardenProfitConfig {
 
     // Active settings
     public static boolean compactProfitCalculator = DEFAULT_COMPACT_PROFIT_CALCULATOR;
+    public static float hudOpacity = DEFAULT_HUD_OPACITY;
     public static boolean showDebug = DEFAULT_SHOW_DEBUG;
 
     public static java.util.List<String> petTrackerList = new java.util.ArrayList<>(DEFAULT_PET_TRACKER_LIST);
@@ -121,6 +123,7 @@ public class GardenProfitConfig {
         ConfigData data = new ConfigData();
         data.compactProfitCalculator = compactProfitCalculator;
         data.showDebug = showDebug;
+        data.hudOpacity = hudOpacity;
         data.petTrackerList = new java.util.ArrayList<>(petTrackerList);
 
         data.sessionProfitHudX = sessionProfitHudX;
@@ -156,6 +159,7 @@ public class GardenProfitConfig {
             if (data != null) {
                 compactProfitCalculator = data.compactProfitCalculator;
                 showDebug = data.showDebug;
+                hudOpacity = data.hudOpacity > 0 ? Math.min(data.hudOpacity, 1.0f) : DEFAULT_HUD_OPACITY;
 
                 if (data.petTrackerList != null) {
                     petTrackerList = new java.util.ArrayList<>(data.petTrackerList);
@@ -185,6 +189,7 @@ public class GardenProfitConfig {
     private static class ConfigData {
         boolean compactProfitCalculator = DEFAULT_COMPACT_PROFIT_CALCULATOR;
         boolean showDebug = DEFAULT_SHOW_DEBUG;
+        float hudOpacity = DEFAULT_HUD_OPACITY;
         java.util.List<String> petTrackerList = new java.util.ArrayList<>(DEFAULT_PET_TRACKER_LIST);
 
         int sessionProfitHudX = DEFAULT_SESSION_PROFIT_HUD_X;

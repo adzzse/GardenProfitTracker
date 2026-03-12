@@ -45,6 +45,15 @@ public class HudEditScreen {
                 .setSaveConsumer(val -> GardenProfitConfig.showDebug = val)
                 .build());
 
+        general.addEntry(entryBuilder.startIntSlider(
+                        Component.literal("HUD Opacity"),
+                        (int) (GardenProfitConfig.hudOpacity * 100),
+                        10, 100)
+                .setDefaultValue((int) (GardenProfitConfig.DEFAULT_HUD_OPACITY * 100))
+                .setTooltip(Component.literal("Transparency of the HUD background (10-100%)"))
+                .setSaveConsumer(val -> GardenProfitConfig.hudOpacity = val / 100f)
+                .build());
+
         general.addEntry(entryBuilder.startStrList(
                         Component.literal("Pet Tracker List"),
                         GardenProfitConfig.petTrackerList)

@@ -38,6 +38,32 @@ public class GardenProfitClient implements ClientModInitializer {
                         return 1;
                     })
                 )
+                .then(ClientCommandManager.literal("hide")
+                    .executes(context -> {
+                        GardenProfitConfig.showSessionProfitHud = false;
+                        GardenProfitConfig.showDailyHud = false;
+                        GardenProfitConfig.showLifetimeHud = false;
+                        GardenProfitConfig.save();
+                        if (Minecraft.getInstance().player != null) {
+                            Minecraft.getInstance().player.displayClientMessage(
+                                net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD hidden."), false);
+                        }
+                        return 1;
+                    })
+                )
+                .then(ClientCommandManager.literal("show")
+                    .executes(context -> {
+                        GardenProfitConfig.showSessionProfitHud = true;
+                        GardenProfitConfig.showDailyHud = true;
+                        GardenProfitConfig.showLifetimeHud = true;
+                        GardenProfitConfig.save();
+                        if (Minecraft.getInstance().player != null) {
+                            Minecraft.getInstance().player.displayClientMessage(
+                                net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD visible."), false);
+                        }
+                        return 1;
+                    })
+                )
             );
         });
 
