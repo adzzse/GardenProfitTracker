@@ -3,6 +3,7 @@ package com.gardenprofit.mod.gui;
 import java.util.Map;
 
 import com.gardenprofit.mod.GardenProfitConfig;
+import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.ProfitManager;
 
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
@@ -350,13 +351,18 @@ public class ProfitHudRenderer {
 
             // Session only: Coins per Hour
             if ("session".equals(mode)) {
-                long sessionMs = getSessionRunningTime();
+                long gardenMs = LocationTracker.getGardenUptimeMs();
                 long cph = 0;
-                if (sessionMs > 0) {
-                    double hours = sessionMs / 3600000.0;
+                if (gardenMs > 0) {
+                    double hours = gardenMs / 3600000.0;
                     cph = (long) (total / hours);
                 }
                 drawRow(g, client, rowY, "Coins per Hour", formatProfit(cph), 0xFF55FFFF);
+                rowY += ROW_HEIGHT;
+
+                // Uptime (time spent in Garden)
+                String uptime = LocationTracker.getFormattedUptime();
+                drawRow(g, client, rowY, "Uptime", uptime, 0xFF55FF55);
             }
         }
 
@@ -374,7 +380,7 @@ public class ProfitHudRenderer {
         }
 
         if (itemCount > 0) {
-            int extraRows = "session".equals(mode) ? 1 : 0; // Session HUD has CPH row
+            int extraRows = "session".equals(mode) ? 2 : 0; // Session HUD has CPH + Uptime rows
             baseH += itemCount * ROW_HEIGHT + 4 + ROW_HEIGHT + (extraRows * ROW_HEIGHT) + PADDING_V;
         } else {
             baseH += ROW_HEIGHT + PADDING_V; // Show at least one empty row or just the title

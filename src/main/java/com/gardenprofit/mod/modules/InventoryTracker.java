@@ -61,7 +61,7 @@ public class InventoryTracker {
             "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
             "Pest Shard",
             "Cropie", "Squash", "Fermento",
-            "Helianthus", "Tool EXP Capsule");
+            "Tool EXP Capsule");
 
     /**
      * Called when the player switches worlds / joins a server.

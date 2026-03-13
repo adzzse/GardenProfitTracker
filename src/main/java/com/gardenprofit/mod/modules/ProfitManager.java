@@ -1041,7 +1041,7 @@ public class ProfitManager {
         fetchBazaarPrices();
     }
 
-    private static synchronized void fetchBazaarPrices() {
+    public static synchronized void fetchBazaarPrices() {
         lastBazaarFetchTime = System.currentTimeMillis();
         new Thread(() -> {
             System.out.println("[GardenProfit] Starting bazaar price fetch...");
@@ -1097,10 +1097,14 @@ public class ProfitManager {
                         java.net.http.HttpResponse.BodyHandlers.ofString());
                 if (response.statusCode() == 200) {
                     BazaarApiResponse data = GSON.fromJson(response.body(), BazaarApiResponse.class);
-                    if (data != null && data.buy > 0) {
-                        bazaarPrices.put(itemName, data.buy);
-                        fetched++;
-                        System.out.println("[GardenProfit] Price: " + itemName + " = " + String.format("%.1f", data.buy));
+                    if (data != null) {
+                        double price = GardenProfitConfig.useBazaarSellPrice ? data.sell : data.buy;
+                        if (price > 0) {
+                            bazaarPrices.put(itemName, price);
+                            fetched++;
+                            String priceType = GardenProfitConfig.useBazaarSellPrice ? "sell" : "buy";
+                            System.out.println("[GardenProfit] Price (" + priceType + "): " + itemName + " = " + String.format("%.1f", price));
+                        }
                     }
                 } else {
                     failed++;
@@ -1230,6 +1234,7 @@ public class ProfitManager {
     }
 
     private static class BazaarApiResponse {
+        double sell;
         double buy;
     }
 
