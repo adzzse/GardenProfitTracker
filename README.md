@@ -33,7 +33,7 @@ Settings are saved in your instance's `config/garden_profit_config.json` folder.
 
 ## Installation
 
-1.  Make sure you have [Fabric Loader](https://fabricmc.net/) installed for Minecraft 1.21.1.
+1.  Make sure you have [Fabric Loader](https://fabricmc.net/) installed for Minecraft 1.21.11/1.21.x.
 2.  Install the required dependencies (such as Fabric API).
 3.  Drop the compiled `.jar` file into your `.minecraft/mods` folder.
 
