@@ -17,8 +17,9 @@ public class GardenProfitConfig {
     // Profit HUD Defaults
     public static final boolean DEFAULT_COMPACT_PROFIT_CALCULATOR = false;
     public static final boolean DEFAULT_SHOW_DEBUG = false;
-    public static final float DEFAULT_HUD_OPACITY = 0.85f;
+    public static final float DEFAULT_HUD_OPACITY = 0.65f;
     public static final boolean DEFAULT_USE_BAZAAR_SELL_PRICE = true;
+    public static final boolean DEFAULT_HUD_HIDDEN = false;
 
     // Pet Tracker Defaults
     public static final java.util.List<String> DEFAULT_PET_TRACKER_LIST = java.util.Arrays.asList(
@@ -34,19 +35,20 @@ public class GardenProfitConfig {
     public static final int DEFAULT_DAILY_HUD_X = 10;
     public static final int DEFAULT_DAILY_HUD_Y = 290;
     public static final float DEFAULT_DAILY_HUD_SCALE = 1.0f;
-    public static final boolean DEFAULT_SHOW_DAILY_HUD = true;
+    public static final boolean DEFAULT_SHOW_DAILY_HUD = false;
 
     // Lifetime HUD
     public static final int DEFAULT_LIFETIME_HUD_X = 10;
     public static final int DEFAULT_LIFETIME_HUD_Y = 430;
     public static final float DEFAULT_LIFETIME_HUD_SCALE = 1.0f;
-    public static final boolean DEFAULT_SHOW_LIFETIME_HUD = true;
+    public static final boolean DEFAULT_SHOW_LIFETIME_HUD = false;
 
     // Active settings
     public static boolean compactProfitCalculator = DEFAULT_COMPACT_PROFIT_CALCULATOR;
     public static float hudOpacity = DEFAULT_HUD_OPACITY;
     public static boolean showDebug = DEFAULT_SHOW_DEBUG;
     public static boolean useBazaarSellPrice = DEFAULT_USE_BAZAAR_SELL_PRICE;
+    public static boolean hudHidden = DEFAULT_HUD_HIDDEN;
 
     public static java.util.List<String> petTrackerList = new java.util.ArrayList<>(DEFAULT_PET_TRACKER_LIST);
 
@@ -127,6 +129,7 @@ public class GardenProfitConfig {
         data.showDebug = showDebug;
         data.hudOpacity = hudOpacity;
         data.useBazaarSellPrice = useBazaarSellPrice;
+        data.hudHidden = hudHidden;
         data.petTrackerList = new java.util.ArrayList<>(petTrackerList);
 
         data.sessionProfitHudX = sessionProfitHudX;
@@ -164,6 +167,7 @@ public class GardenProfitConfig {
                 showDebug = data.showDebug;
                 hudOpacity = data.hudOpacity > 0 ? Math.min(data.hudOpacity, 1.0f) : DEFAULT_HUD_OPACITY;
                 useBazaarSellPrice = data.useBazaarSellPrice;
+                hudHidden = data.hudHidden;
 
                 if (data.petTrackerList != null) {
                     petTrackerList = new java.util.ArrayList<>(data.petTrackerList);
@@ -195,6 +199,7 @@ public class GardenProfitConfig {
         boolean showDebug = DEFAULT_SHOW_DEBUG;
         float hudOpacity = DEFAULT_HUD_OPACITY;
         boolean useBazaarSellPrice = DEFAULT_USE_BAZAAR_SELL_PRICE;
+        boolean hudHidden = DEFAULT_HUD_HIDDEN;
         java.util.List<String> petTrackerList = new java.util.ArrayList<>(DEFAULT_PET_TRACKER_LIST);
 
         int sessionProfitHudX = DEFAULT_SESSION_PROFIT_HUD_X;

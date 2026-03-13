@@ -85,6 +85,8 @@ public class ProfitHudRenderer {
         HudRenderCallback.EVENT.register((guiGraphics, delta) -> {
             Minecraft client = Minecraft.getInstance();
 
+            if (GardenProfitConfig.hudHidden) return;
+
             if (GardenProfitConfig.showSessionProfitHud) {
                 render(guiGraphics, client, "session", false);
             }
