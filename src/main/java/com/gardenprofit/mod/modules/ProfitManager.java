@@ -299,12 +299,6 @@ public class ProfitManager {
             return;
         }
 
-        Matcher cropMatcher = RARE_CROP_PATTERN.matcher(text);
-        if (cropMatcher.find()) {
-            addDrop(cropMatcher.group(1).trim(), 1);
-            return;
-        }
-
         // Plain text processing for standard drops
         String plainText = STRIP_COLOR_PATTERN.matcher(text).replaceAll("").trim();
 
