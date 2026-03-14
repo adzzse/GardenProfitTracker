@@ -57,7 +57,7 @@ public class InventoryTracker {
             "Beady Eyes", "Chirping Stereo", "Clipped Wings",
             "Bookworm's Favorite Book", "Atmospheric Filter", "Wriggling Larva",
             "Squeaky Toy", "Squeaky Mousemat", "Fire in a Bottle",
-            "Vermin Vaporizer Chip", "Mantid Claw", "Overclocker 3000",
+            "Mantid Claw", "Overclocker 3000",
             "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
             "Pest Shard",
             "Cropie", "Squash", "Fermento",

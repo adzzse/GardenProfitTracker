@@ -9,6 +9,7 @@ import com.gardenprofit.mod.modules.SackTracker;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.Minecraft;
 
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -23,6 +24,13 @@ public class GardenProfitClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         GardenProfitConfig.load();
+
+        // Cache inventory/purse on world join
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            InventoryTracker.onWorldSwitch();
+            LocationTracker.onWorldSwitch();
+            ProfitManager.onWorldSwitch(client);
+        });
 
         // Register /gardenprofit command to open the HUD edit screen
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {

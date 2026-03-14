@@ -119,7 +119,10 @@ public class GardenProfitConfig {
         }
     }
 
-    private static final File CONFIG_FILE = FabricLoader.getInstance().getConfigDir()
+    private static final File CONFIG_DIR = FabricLoader.getInstance().getConfigDir()
+            .resolve("gardenprofit").toFile();
+    private static final File CONFIG_FILE = new File(CONFIG_DIR, "config.json");
+    private static final File OLD_CONFIG_FILE = FabricLoader.getInstance().getConfigDir()
             .resolve("garden_profit_config.json").toFile();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
@@ -147,6 +150,9 @@ public class GardenProfitConfig {
         data.lifetimeHudScale = lifetimeHudScale;
         data.showLifetimeHud = showLifetimeHud;
 
+        if (!CONFIG_DIR.exists()) {
+            CONFIG_DIR.mkdirs();
+        }
         try (FileWriter writer = new FileWriter(CONFIG_FILE)) {
             GSON.toJson(data, writer);
         } catch (IOException e) {
@@ -155,6 +161,15 @@ public class GardenProfitConfig {
     }
 
     public static void load() {
+        // Migrate old config file to new location
+        if (!CONFIG_FILE.exists() && OLD_CONFIG_FILE.exists()) {
+            if (!CONFIG_DIR.exists()) {
+                CONFIG_DIR.mkdirs();
+            }
+            OLD_CONFIG_FILE.renameTo(CONFIG_FILE);
+            System.out.println("[GardenProfit] Migrated config from " + OLD_CONFIG_FILE.getName() + " to " + CONFIG_FILE.getPath());
+        }
+
         if (!CONFIG_FILE.exists()) {
             save();
             return;

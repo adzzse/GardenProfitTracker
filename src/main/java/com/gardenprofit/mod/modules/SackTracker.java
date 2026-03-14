@@ -100,6 +100,14 @@ public class SackTracker {
                 String itemName = entry.getKey();
                 int netDelta = entry.getValue();
 
+                // Skip items recently purchased from Bazaar (they are tracked as costs)
+                if (ProfitManager.isBazaarPurchaseIgnored(itemName)) {
+                    Minecraft client = Minecraft.getInstance();
+                    ClientUtils.sendDebugMessage(client,
+                            "[Sack] Ignored bazaar purchase: +" + netDelta + " " + itemName);
+                    continue;
+                }
+
                 ProfitManager.addSackDrop(itemName, netDelta);
 
                 Minecraft client = Minecraft.getInstance();

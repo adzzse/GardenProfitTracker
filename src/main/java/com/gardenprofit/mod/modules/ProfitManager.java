@@ -45,11 +45,33 @@ public class ProfitManager {
         spraySessionQuantity = 0;
     }
 
-    private static final java.io.File LIFETIME_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+    /**
+     * Called on world join to seed the purse baseline so the first
+     * purse read doesn't get silently consumed.
+     */
+    public static void onWorldSwitch(Minecraft client) {
+        long currentPurse = ClientUtils.getPurse(client);
+        if (currentPurse != -1) {
+            lastPurseBalance = currentPurse;
+            ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse baseline set to " + currentPurse + " on join.");
+        } else {
+            lastPurseBalance = -1;
+            ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse not available on join, will seed on first read.");
+        }
+    }
+
+    private static final java.io.File CONFIG_DIR = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+            .resolve("gardenprofit").toFile();
+    private static final java.io.File LIFETIME_FILE = new java.io.File(CONFIG_DIR, "lifetime.json");
+    private static final java.io.File DAILY_FILE = new java.io.File(CONFIG_DIR, "daily.json");
+    private static final java.io.File BAZAAR_CACHE_FILE = new java.io.File(CONFIG_DIR, "bazaar_cache.json");
+
+    // Old file paths for migration
+    private static final java.io.File OLD_LIFETIME_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
             .resolve("pest_macro_profit_lifetime.json").toFile();
-    private static final java.io.File DAILY_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+    private static final java.io.File OLD_DAILY_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
             .resolve("pest_macro_profit_daily.json").toFile();
-    private static final java.io.File BAZAAR_CACHE_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
+    private static final java.io.File OLD_BAZAAR_CACHE_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
             .resolve("gardenprofit_bazaar_cache.json").toFile();
     private static final com.google.gson.Gson GSON = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
 
@@ -76,7 +98,7 @@ public class ProfitManager {
             "Bookworm's Favorite Book", "Atmospheric Filter", "Wriggling Larva",
             "Pesterminator I Book", "Squeaky Toy", "Squeaky Mousemat",
             "Fire in a Bottle", "Vermin Vaporizer Chip", "Mantid Claw",
-            "Overclocker 3000", "Vinyl",
+            "Overclocker 3000",
             "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
             "Pest Shard");
 
@@ -129,7 +151,6 @@ public class ProfitManager {
             Map.entry("Vermin Vaporizer Chip", 0.0),
             Map.entry("Mantid Claw", 75000.0),
             Map.entry("Overclocker 3000", 250000.0),
-            Map.entry("Vinyl", 50000.0),
             Map.entry("Dung", 0.0), Map.entry("Honey Jar", 0.0), Map.entry("Plant Matter", 0.0),
             Map.entry("Tasty Cheese", 0.0), Map.entry("Compost", 0.0), Map.entry("Jelly", 0.0),
             // Pets
@@ -145,13 +166,7 @@ public class ProfitManager {
             Map.entry("Harvest Harbinger V Potion", 0.0),
             Map.entry("Velvet Top Hat", 0.0), Map.entry("Cashmere Hat", 0.0), Map.entry("Satin Trousers", 0.0),
             Map.entry("Oxford Shoes", 0.0), Map.entry("Space Helmet", 0.0), Map.entry("Wild Strawberry Dye", 0.0),
-            Map.entry("Copper Dye", 0.0), Map.entry("Clouds Rune I", 0.0), Map.entry("Fire Spiral Rune I", 0.0),
-            Map.entry("Gem Rune I", 0.0), Map.entry("Golden Rune I", 0.0), Map.entry("Hearts Rune I", 0.0),
-            Map.entry("Hot Rune I", 0.0), Map.entry("Lava Rune I", 0.0), Map.entry("Lightning Rune I", 0.0),
-            Map.entry("Magical Rune I", 0.0), Map.entry("Music Rune I", 0.0), Map.entry("Rainbow Rune I", 0.0),
-            Map.entry("Redstone Rune I", 0.0), Map.entry("Smokey Rune I", 0.0), Map.entry("Snow Rune I", 0.0),
-            Map.entry("Sparkling Rune I", 0.0), Map.entry("Wake Rune I", 0.0), Map.entry("White Spiral Rune I", 0.0),
-            Map.entry("Zap Rune I", 0.0),
+            Map.entry("Copper Dye", 0.0),
             // Visitor / Rare Drops
             Map.entry("Overgrown Grass", 0.0), Map.entry("Flowering Bouqet", 0.0), Map.entry("Green Bandana", 0.0),
             Map.entry("Hypercharge Chip", 0.0), Map.entry("Quickdraw Chip", 0.0), Map.entry("Superboom TNT", 0.0),
@@ -228,25 +243,7 @@ public class ProfitManager {
             Map.entry("Oxford Shoes", "OXFORD_SHOES"),
             Map.entry("Space Helmet", "DCTR_SPACE_HELM"),
             Map.entry("Wild Strawberry Dye", "DYE_WILD_STRAWBERRY"),
-            Map.entry("Copper Dye", "DYE_COPPER"),
-            Map.entry("Clouds Rune I", "RUNE_CLOUDS"),
-            Map.entry("Fire Spiral Rune I", "RUNE_FIRE_SPIRAL"),
-            Map.entry("Gem Rune I", "RUNE_GEM"),
-            Map.entry("Golden Rune I", "RUNE_GOLDEN"),
-            Map.entry("Hearts Rune I", "RUNE_HEARTS"),
-            Map.entry("Hot Rune I", "RUNE_HOT"),
-            Map.entry("Lava Rune I", "RUNE_LAVA"),
-            Map.entry("Lightning Rune I", "RUNE_LIGHTNING"),
-            Map.entry("Magical Rune I", "RUNE_MAGIC"),
-            Map.entry("Music Rune I", "RUNE_MUSIC"),
-            Map.entry("Rainbow Rune I", "RUNE_RAINBOW"),
-            Map.entry("Redstone Rune I", "RUNE_REDSTONE"),
-            Map.entry("Smokey Rune I", "RUNE_SMOKEY"),
-            Map.entry("Snow Rune I", "RUNE_SNOW"),
-            Map.entry("Sparkling Rune I", "RUNE_SPARKLING"),
-            Map.entry("Wake Rune I", "RUNE_WAKE"),
-            Map.entry("White Spiral Rune I", "RUNE_WHITE_SPIRAL"),
-            Map.entry("Zap Rune I", "RUNE_ZAP"));
+            Map.entry("Copper Dye", "DYE_COPPER"));
 
     private static final Pattern PEST_PATTERN = Pattern.compile("received\\s+(\\d+)x\\s+(.+?)\\s+for\\s+killing",
             Pattern.CASE_INSENSITIVE);
@@ -274,6 +271,9 @@ public class ProfitManager {
             "SPRAYONATOR! You sprayed Plot - \\d+ with (.+?)(?:!|$)",
             Pattern.CASE_INSENSITIVE);
     private static long lastBazaarSprayBuyTime = 0;
+    // Items recently bought from bazaar -- SackTracker/InventoryTracker should ignore these
+    private static final Map<String, Long> recentBazaarPurchases = new LinkedHashMap<>();
+    private static final long BAZAAR_PURCHASE_IGNORE_MS = 15_000;
     private static boolean isTrackingVisitorRewards = false;
     private static boolean copperSeenInRewards = false;
 
@@ -354,8 +354,11 @@ public class ProfitManager {
                 double coins = Double.parseDouble(bazaarMatcher.group(3).replace(",", ""));
                 ClientUtils.sendDebugMessage(Minecraft.getInstance(),
                         "Bazaar buy detected: " + count + "x " + itemName + " for " + coins + " coins");
-                addDrop(itemName, -count);
-                addDrop("Purse", -Math.round(coins));
+                // Track only the coin cost under [Bazaar] prefix
+                addBazaarCost(itemName, count, Math.round(coins));
+                // Mark this item as recently purchased so sack/inventory trackers ignore it
+                recentBazaarPurchases.put(itemName, System.currentTimeMillis() + BAZAAR_PURCHASE_IGNORE_MS);
+                InventoryTracker.ignoreItem(itemName, BAZAAR_PURCHASE_IGNORE_MS);
                 lastBazaarSprayBuyTime = System.currentTimeMillis();
             } catch (Exception ignored) {
             }
@@ -569,6 +572,30 @@ public class ProfitManager {
         saveDaily();
     }
 
+    public static void addBazaarCost(String itemName, int quantity, long coins) {
+        String key = "[Bazaar] " + itemName;
+        checkDailyReset();
+        sessionCounts.put(key, sessionCounts.getOrDefault(key, 0L) - coins);
+        dailyCounts.put(key, dailyCounts.getOrDefault(key, 0L) - coins);
+        lifetimeCounts.put(key, lifetimeCounts.getOrDefault(key, 0L) - coins);
+        saveLifetime();
+        saveDaily();
+    }
+
+    /**
+     * Returns true if the given item was recently purchased from the Bazaar
+     * and should be ignored by SackTracker / InventoryTracker.
+     */
+    public static boolean isBazaarPurchaseIgnored(String itemName) {
+        Long expiry = recentBazaarPurchases.get(itemName);
+        if (expiry == null) return false;
+        if (System.currentTimeMillis() > expiry) {
+            recentBazaarPurchases.remove(itemName);
+            return false;
+        }
+        return true;
+    }
+
     public static long getSprayQuantity(boolean lifetime) {
         return lifetime ? sprayLifetimeQuantity : spraySessionQuantity;
     }
@@ -585,6 +612,9 @@ public class ProfitManager {
         }
         if (name.equals("[Visitor] Visitor Cost")) {
             return "§c§l[COST] §fVisitor Cost";
+        }
+        if (name.startsWith("[Bazaar] ")) {
+            return "§c§l[COST] §fBazaar: " + name.substring(9);
         }
         if (name.startsWith("[Visitor] ")) {
             return "§5§l[VISITOR] §f" + name.substring(10);
@@ -725,7 +755,7 @@ public class ProfitManager {
                 compact.put("Pets", compact.get("Pets") + (long) profit);
             } else if (MISC_DROPS_SET.contains(name) || name.toLowerCase().startsWith("pet xp (")) {
                 compact.put("Misc Drops", compact.get("Misc Drops") + (long) profit);
-            } else if (name.equals("[Visitor] Visitor Cost") || name.equals("[Spray] Sprayonator")) {
+            } else if (name.equals("[Visitor] Visitor Cost") || name.equals("[Spray] Sprayonator") || name.startsWith("[Bazaar] ")) {
                 compact.put("Costs", compact.get("Costs") + (long) profit);
             } else if (name.startsWith("[Visitor] ")) {
                 compact.put("Visitor", compact.get("Visitor") + (long) profit);
@@ -793,6 +823,7 @@ public class ProfitManager {
     }
 
     private static void saveLifetime() {
+        ensureConfigDir();
         try (java.io.FileWriter writer = new java.io.FileWriter(LIFETIME_FILE)) {
             GSON.toJson(lifetimeCounts, writer);
         } catch (java.io.IOException e) {
@@ -801,6 +832,7 @@ public class ProfitManager {
     }
 
     public static void loadLifetime() {
+        migrateOldFile(OLD_LIFETIME_FILE, LIFETIME_FILE);
         if (!LIFETIME_FILE.exists())
             return;
         try (java.io.FileReader reader = new java.io.FileReader(LIFETIME_FILE)) {
@@ -817,6 +849,7 @@ public class ProfitManager {
     }
 
     private static void saveDaily() {
+        ensureConfigDir();
         try (java.io.FileWriter writer = new java.io.FileWriter(DAILY_FILE)) {
             DailyData data = new DailyData();
             data.counts = new LinkedHashMap<>(dailyCounts);
@@ -829,6 +862,7 @@ public class ProfitManager {
     }
 
     public static void loadDaily() {
+        migrateOldFile(OLD_DAILY_FILE, DAILY_FILE);
         if (!DAILY_FILE.exists())
             return;
         try (java.io.FileReader reader = new java.io.FileReader(DAILY_FILE)) {
@@ -873,6 +907,7 @@ public class ProfitManager {
     // ── Bazaar Price Cache ──
 
     private static void saveBazaarCache() {
+        ensureConfigDir();
         try (java.io.FileWriter writer = new java.io.FileWriter(BAZAAR_CACHE_FILE)) {
             BazaarCacheData data = new BazaarCacheData();
             data.prices = new LinkedHashMap<>(bazaarPrices);
@@ -886,6 +921,7 @@ public class ProfitManager {
     }
 
     public static void loadBazaarCache() {
+        migrateOldFile(OLD_BAZAAR_CACHE_FILE, BAZAAR_CACHE_FILE);
         if (!BAZAAR_CACHE_FILE.exists()) {
             System.out.println("[GardenProfit] No bazaar cache file found, will fetch fresh prices.");
             return;
@@ -1236,5 +1272,22 @@ public class ProfitManager {
     private static class OverviewEntry {
         long price;
         String uuid;
+    }
+
+    /** Ensure the config/gardenprofit/ directory exists. */
+    private static void ensureConfigDir() {
+        if (!CONFIG_DIR.exists()) {
+            CONFIG_DIR.mkdirs();
+        }
+    }
+
+    /** Migrate an old config file to the new location if it exists. */
+    private static void migrateOldFile(java.io.File oldFile, java.io.File newFile) {
+        if (!newFile.exists() && oldFile.exists()) {
+            ensureConfigDir();
+            if (oldFile.renameTo(newFile)) {
+                System.out.println("[GardenProfit] Migrated " + oldFile.getName() + " -> " + newFile.getPath());
+            }
+        }
     }
 }
