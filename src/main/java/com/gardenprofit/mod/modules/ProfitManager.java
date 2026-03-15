@@ -354,8 +354,8 @@ public class ProfitManager {
                 double coins = Double.parseDouble(bazaarMatcher.group(3).replace(",", ""));
                 ClientUtils.sendDebugMessage(Minecraft.getInstance(),
                         "Bazaar buy detected: " + count + "x " + itemName + " for " + coins + " coins");
-                // Track only the coin cost under [Bazaar] prefix
-                addBazaarCost(itemName, count, Math.round(coins));
+                // Track the coin cost as visitor cost
+                addVisitorCost(Math.round(coins));
                 // Mark this item as recently purchased so sack/inventory trackers ignore it
                 recentBazaarPurchases.put(itemName, System.currentTimeMillis() + BAZAAR_PURCHASE_IGNORE_MS);
                 InventoryTracker.ignoreItem(itemName, BAZAAR_PURCHASE_IGNORE_MS);
@@ -417,7 +417,10 @@ public class ProfitManager {
                         "Sprayonator use ignored due to recent Bazaar buy.");
             } else {
                 ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Sprayonator use detected (" + baitName + ").");
-                addDrop(baitName, -1);
+                // Track the spray material as a cost, not a negative drop
+                double baitPrice = getItemPrice(baitName);
+                if (baitPrice <= 0) baitPrice = 1.0;
+                addSprayCost(1, Math.round(baitPrice));
             }
         }
     }
@@ -477,9 +480,14 @@ public class ProfitManager {
 
         long finalCount = count * multiplier;
 
-        // Group all Vinyl items together
+        // Group all Vinyl items together and skip them (deleted by personal de-aggregator)
         if (processedName.toLowerCase().endsWith("vinyl")) {
-            processedName = "Vinyl";
+            return;
+        }
+
+        // Skip rune items (deleted by personal de-aggregator)
+        if (processedName.toLowerCase().contains("rune")) {
+            return;
         }
 
         // Find the tracked item name that matches (case-insensitive) for pretty
@@ -572,16 +580,6 @@ public class ProfitManager {
         saveDaily();
     }
 
-    public static void addBazaarCost(String itemName, int quantity, long coins) {
-        String key = "[Bazaar] " + itemName;
-        checkDailyReset();
-        sessionCounts.put(key, sessionCounts.getOrDefault(key, 0L) - coins);
-        dailyCounts.put(key, dailyCounts.getOrDefault(key, 0L) - coins);
-        lifetimeCounts.put(key, lifetimeCounts.getOrDefault(key, 0L) - coins);
-        saveLifetime();
-        saveDaily();
-    }
-
     /**
      * Returns true if the given item was recently purchased from the Bazaar
      * and should be ignored by SackTracker / InventoryTracker.
@@ -612,9 +610,6 @@ public class ProfitManager {
         }
         if (name.equals("[Visitor] Visitor Cost")) {
             return "§c§l[COST] §fVisitor Cost";
-        }
-        if (name.startsWith("[Bazaar] ")) {
-            return "§c§l[COST] §fBazaar: " + name.substring(9);
         }
         if (name.startsWith("[Visitor] ")) {
             return "§5§l[VISITOR] §f" + name.substring(10);
@@ -700,8 +695,9 @@ public class ProfitManager {
             counts = sessionCounts;
         }
 
-        // Sort by total profit (count * price) descending
+        // Sort by total profit (count * price) descending, filtering out rune/vinyl
         return counts.entrySet().stream()
+                .filter(e -> !isIgnoredItem(e.getKey()))
                 .sorted((e1, e2) -> {
                     double p1 = getItemPrice(e1.getKey()) * e1.getValue();
                     double p2 = getItemPrice(e2.getKey()) * e2.getValue();
@@ -712,6 +708,15 @@ public class ProfitManager {
                         Map.Entry::getValue,
                         (v1, v2) -> v1,
                         LinkedHashMap::new));
+    }
+
+    /**
+     * Returns true if this item should be hidden from rendering (runes, vinyl).
+     */
+    private static boolean isIgnoredItem(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.contains("rune") || lower.endsWith("vinyl") || lower.equals("vinyl");
     }
 
     public static Map<String, Long> getCompactDrops() {
@@ -743,6 +748,7 @@ public class ProfitManager {
 
         for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
             String name = entry.getKey();
+            if (isIgnoredItem(name)) continue;
             long count = entry.getValue();
             double price = getItemPrice(name);
             double profit = price * count;
@@ -755,7 +761,7 @@ public class ProfitManager {
                 compact.put("Pets", compact.get("Pets") + (long) profit);
             } else if (MISC_DROPS_SET.contains(name) || name.toLowerCase().startsWith("pet xp (")) {
                 compact.put("Misc Drops", compact.get("Misc Drops") + (long) profit);
-            } else if (name.equals("[Visitor] Visitor Cost") || name.equals("[Spray] Sprayonator") || name.startsWith("[Bazaar] ")) {
+            } else if (name.equals("[Visitor] Visitor Cost") || name.equals("[Spray] Sprayonator")) {
                 compact.put("Costs", compact.get("Costs") + (long) profit);
             } else if (name.startsWith("[Visitor] ")) {
                 compact.put("Visitor", compact.get("Visitor") + (long) profit);
@@ -816,6 +822,7 @@ public class ProfitManager {
         }
 
         for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
+            if (isIgnoredItem(entry.getKey())) continue;
             double price = getItemPrice(entry.getKey());
             total += price * entry.getValue();
         }
