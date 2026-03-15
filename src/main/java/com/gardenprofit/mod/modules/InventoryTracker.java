@@ -54,8 +54,6 @@ public class InventoryTracker {
     // Items that we care about tracking via inventory diff
     // (pest drops, misc garden items that go to inventory)
     private static final Set<String> TRACKED_INVENTORY_ITEMS = Set.of(
-            "Beady Eyes", "Chirping Stereo", "Clipped Wings",
-            "Bookworm's Favorite Book", "Atmospheric Filter", "Wriggling Larva",
             "Squeaky Toy", "Squeaky Mousemat", "Fire in a Bottle",
             "Mantid Claw", "Overclocker 3000",
             "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
