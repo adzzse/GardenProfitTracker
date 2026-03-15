@@ -24,6 +24,8 @@ public class GardenProfitClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         GardenProfitConfig.load();
+        ProfitManager.loadLifetime();
+        ProfitManager.loadDaily();
 
         // Cache inventory/purse on world join
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {

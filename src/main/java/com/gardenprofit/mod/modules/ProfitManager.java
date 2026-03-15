@@ -515,8 +515,7 @@ public class ProfitManager {
 
         dailyCounts.put(matchedName, dailyCounts.getOrDefault(matchedName, 0L) + finalCount);
         lifetimeCounts.put(matchedName, lifetimeCounts.getOrDefault(matchedName, 0L) + finalCount);
-        saveLifetime();
-        saveDaily();
+        needsSave = true;
     }
 
     /**
@@ -829,13 +828,19 @@ public class ProfitManager {
         return (long) total;
     }
 
+    private static boolean needsSave = false;
+    private static long lastSaveTime = 0;
+
     private static void saveLifetime() {
         ensureConfigDir();
-        try (java.io.FileWriter writer = new java.io.FileWriter(LIFETIME_FILE)) {
-            GSON.toJson(lifetimeCounts, writer);
-        } catch (java.io.IOException e) {
-            e.printStackTrace();
-        }
+        Map<String, Long> lifetimeCopy = new LinkedHashMap<>(lifetimeCounts);
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try (java.io.FileWriter writer = new java.io.FileWriter(LIFETIME_FILE)) {
+                GSON.toJson(lifetimeCopy, writer);
+            } catch (java.io.IOException e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     public static void loadLifetime() {
@@ -857,15 +862,17 @@ public class ProfitManager {
 
     private static void saveDaily() {
         ensureConfigDir();
-        try (java.io.FileWriter writer = new java.io.FileWriter(DAILY_FILE)) {
-            DailyData data = new DailyData();
-            data.counts = new LinkedHashMap<>(dailyCounts);
-            data.sprayQuantity = sprayDailyQuantity;
-            data.resetDate = lastDailyResetDate;
-            GSON.toJson(data, writer);
-        } catch (java.io.IOException e) {
-            e.printStackTrace();
-        }
+        DailyData data = new DailyData();
+        data.counts = new LinkedHashMap<>(dailyCounts);
+        data.sprayQuantity = sprayDailyQuantity;
+        data.resetDate = lastDailyResetDate;
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try (java.io.FileWriter writer = new java.io.FileWriter(DAILY_FILE)) {
+                GSON.toJson(data, writer);
+            } catch (java.io.IOException e) {
+                e.printStackTrace();
+            }
+        });
     }
 
     public static void loadDaily() {
@@ -1003,6 +1010,13 @@ public class ProfitManager {
     public static void update(net.minecraft.client.Minecraft client) {
         if (client.player == null)
             return;
+
+        if (needsSave && System.currentTimeMillis() - lastSaveTime > 5000) {
+            saveLifetime();
+            saveDaily();
+            needsSave = false;
+            lastSaveTime = System.currentTimeMillis();
+        }
 
         // 1. Track Purse
         long currentPurse = ClientUtils.getPurse(client);
