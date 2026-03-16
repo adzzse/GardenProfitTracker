@@ -49,20 +49,15 @@ public final class ItemConstants {
 
     public static final Set<String> MISC_DROPS = Set.of(
             "Cropie", "Squash", "Fermento", "Helianthus",
-            "Tool EXP Capsule", "Pet XP", "Purse");
+            "Tool EXP Capsule", "Pet XP", "Jacob's Ticket", "Carnival Ticket", "Purse");
 
     /**
-     * Items that InventoryTracker should diff-track (non-sack items
-     * that appear directly in the player's inventory).
-     */
+     * (InventoryTracker was removed -- keeping this empty comment block to preserve lines if needed, or just deleting)
+    
     public static final Set<String> TRACKED_INVENTORY_ITEMS = Set.of(
-            "Squeaky Toy", "Squeaky Mousemat", "Fire in a Bottle",
-            "Mantid Claw", "Overclocker 3000",
-            "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
-            "Pest Shard",
             "Cropie", "Squash", "Fermento",
             "Tool EXP Capsule");
-
+    */
     // ── Fallback Prices (NPC / pre-bazaar values) ───────────────────────
 
     public static final Map<String, Double> TRACKED_ITEMS = Map.ofEntries(

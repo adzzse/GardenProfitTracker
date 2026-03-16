@@ -3,7 +3,7 @@ package com.gardenprofit.mod;
 import com.gardenprofit.mod.gui.ProfitHudRenderer;
 import com.gardenprofit.mod.modules.ChatMessageParser;
 import com.gardenprofit.mod.modules.EventDispatcher;
-import com.gardenprofit.mod.modules.InventoryTracker;
+// import com.gardenprofit.mod.modules.InventoryTracker;
 import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.PetXpTracker;
 import com.gardenprofit.mod.modules.ProfitManager;
@@ -34,18 +34,18 @@ public class GardenProfitClient implements ClientModInitializer {
         EventDispatcher dispatcher = EventDispatcher.getInstance();
         dispatcher.register(SackTracker.getInstance());
         dispatcher.register(ChatMessageParser.getInstance());
-        dispatcher.register(InventoryTracker.getInstance());
+        //dispatcher.register(InventoryTracker.getInstance());
 
         // Cache inventory/purse on world join
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            InventoryTracker.onWorldSwitch();
+        //    InventoryTracker.onWorldSwitch();
             LocationTracker.onWorldSwitch();
             ProfitManager.onWorldSwitch(client);
         });
 
-        // Register /gardenprofit command to open the HUD edit screen
+        // Register /gardenprofit and /gp commands
         ClientCommandRegistrationCallback.EVENT.register((dispatcher2, buildContext) -> {
-            dispatcher2.register(ClientCommandManager.literal("gardenprofit")
+            var commandTree = ClientCommandManager.literal("gardenprofit")
                 .executes(context -> {
                     openConfigScreenNextTick = true;
                     return 1;
@@ -83,8 +83,12 @@ public class GardenProfitClient implements ClientModInitializer {
                         ProfitManager.fetchBazaarPrices();
                         return 1;
                     })
-                )
-            );
+                );
+
+            dispatcher2.register(commandTree);
+            
+            // Register short alias 'gp'
+            dispatcher2.register(ClientCommandManager.literal("gp").redirect(commandTree.build()));
         });
 
         // Register HUD renderer
@@ -96,7 +100,7 @@ public class GardenProfitClient implements ClientModInitializer {
             if (isOverlay) return;
             // Only track drops/sacks while in the Garden
             if (!LocationTracker.isInGarden()) return;
-            // Dispatch to T0 (SackTracker) -> T1 (ChatMessageParser) -> T2 (InventoryTracker)
+            // Dispatch to T0 (SackTracker) -> T1 (ChatMessageParser)
             EventDispatcher.getInstance().dispatchChatMessage(message);
         });
 

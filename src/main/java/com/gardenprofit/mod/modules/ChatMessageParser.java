@@ -108,6 +108,12 @@ public final class ChatMessageParser implements ModEventHandler {
             try {
                 int count = Integer.parseInt(pestMatcher.group(1));
                 String itemName = pestMatcher.group(2).trim();
+                // Crops go to sacks -- SackTracker (T0) already handles them
+                if (ItemConstants.CROPS.contains(itemName)) {
+                    ClientUtils.sendDebugMessage(Minecraft.getInstance(),
+                            "[Chat] Skipping pest crop '" + itemName + "' (handled by SackTracker)");
+                    return;
+                }
                 ProfitManager.getInstance().addDrop(itemName, count);
                 return;
             } catch (Exception ignored) {
@@ -143,10 +149,14 @@ public final class ChatMessageParser implements ModEventHandler {
                 double coins = Double.parseDouble(bazaarMatcher.group(3).replace(",", ""));
                 ClientUtils.sendDebugMessage(Minecraft.getInstance(),
                         "Bazaar buy detected: " + count + "x " + itemName + " for " + coins + " coins");
-                ProfitManager.getInstance().addVisitorCost(Math.round(coins));
+                if (ItemConstants.PEST_ITEMS.contains(itemName)) {
+                    ProfitManager.getInstance().addSprayCost(count, Math.round(coins));
+                    lastBazaarSprayBuyTime = System.currentTimeMillis();
+                } else {
+                    ProfitManager.getInstance().addVisitorCost(Math.round(coins));
+                }
+                
                 recentBazaarPurchases.put(itemName, System.currentTimeMillis() + BAZAAR_PURCHASE_IGNORE_MS);
-                InventoryTracker.ignoreItem(itemName, BAZAAR_PURCHASE_IGNORE_MS);
-                lastBazaarSprayBuyTime = System.currentTimeMillis();
             } catch (Exception ignored) {
             }
         }
