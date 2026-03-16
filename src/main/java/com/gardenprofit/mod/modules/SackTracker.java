@@ -20,8 +20,6 @@ import java.util.regex.Pattern;
  * Parses [Sacks] chat messages from Hypixel SkyBlock to track items
  * going into sacks. The server sends exact item names and counts in
  * the hover text of the chat message siblings.
- *
- * Modeled after SkyHanni's SackApi approach.
  */
 public class SackTracker {
 

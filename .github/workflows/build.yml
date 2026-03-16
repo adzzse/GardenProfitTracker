@@ -50,7 +50,7 @@ jobs:
         if: github.event_name == 'push'
         with:
           tag_name: "build-${{ steps.vars.outputs.sha_short }}"
-          name: "${{ steps.vars.outputs.mod_version }} Automated Build"
+          name: "${{ steps.vars.outputs.mod_version }}"
           body: |
             ## Automated Build
             Commit: ${{ github.sha }}
