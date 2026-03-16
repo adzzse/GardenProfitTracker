@@ -21,7 +21,21 @@ import java.util.regex.Pattern;
  * going into sacks. The server sends exact item names and counts in
  * the hover text of the chat message siblings.
  */
-public class SackTracker {
+public class SackTracker implements ModEventHandler {
+
+    private static final SackTracker INSTANCE = new SackTracker();
+
+    private SackTracker() {}
+
+    public static SackTracker getInstance() { return INSTANCE; }
+
+    @Override
+    public int getPriority() { return 0; } // T0 -- highest priority
+
+    @Override
+    public void onChatMessage(Component component) {
+        handleChatMessage(component);
+    }
 
     // Regex to parse each line in the hover text: "+128 Wheat (Agronomy Sack)"
     private static final Pattern SACK_CHANGE_PATTERN = Pattern.compile(
@@ -38,8 +52,8 @@ public class SackTracker {
     /**
      * Called when any GUI/inventory is opened. If the title contains "Sack",
      * we mark that we're inside a sack inventory to suppress tracking.
-     */
-    public static void onInventoryOpen(String inventoryName) {
+    @Override
+    public void onInventoryOpen(String inventoryName) {
         if (inventoryName != null && inventoryName.contains("Sack")) {
             inSackInventory = true;
         }
@@ -47,8 +61,8 @@ public class SackTracker {
 
     /**
      * Called when any GUI/inventory is closed.
-     */
-    public static void onInventoryClose() {
+    @Override
+    public void onInventoryClose() {
         if (inSackInventory) {
             inSackInventory = false;
             lastSackInventoryCloseTime = System.currentTimeMillis();
@@ -106,7 +120,7 @@ public class SackTracker {
                     continue;
                 }
 
-                ProfitManager.addSackDrop(itemName, netDelta);
+                ProfitManager.getInstance().addSackDrop(itemName, netDelta);
 
                 Minecraft client = Minecraft.getInstance();
                 ClientUtils.sendDebugMessage(client,

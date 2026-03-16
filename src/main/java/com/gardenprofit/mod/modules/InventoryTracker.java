@@ -3,6 +3,7 @@ package com.gardenprofit.mod.modules;
 import com.gardenprofit.mod.GardenProfitConfig;
 import com.gardenprofit.mod.util.ClientUtils;
 import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.LinkedHashMap;
@@ -18,7 +19,13 @@ import java.util.Set;
  *
  * Modeled after SkyHanni's OwnInventoryData approach.
  */
-public class InventoryTracker {
+public class InventoryTracker implements ModEventHandler {
+
+    private static final InventoryTracker INSTANCE = new InventoryTracker();
+
+    private InventoryTracker() {}
+
+    public static InventoryTracker getInstance() { return INSTANCE; }
 
     private static final Map<String, Integer> prevSnapshot = new LinkedHashMap<>();
     private static boolean initialized = false;
@@ -32,33 +39,18 @@ public class InventoryTracker {
     private static final Map<String, Long> ignoredItems = new LinkedHashMap<>();
     private static final long IGNORE_DURATION_MS = 3_000;
 
-    // Crops are tracked by SackTracker, don't double-count them here
-    private static final Set<String> CROP_ITEMS = Set.of(
-            "Wheat", "Enchanted Wheat", "Enchanted Hay Bale",
-            "Seeds", "Enchanted Seeds", "Box of Seeds",
-            "Potato", "Enchanted Potato", "Enchanted Baked Potato",
-            "Carrot", "Enchanted Carrot", "Enchanted Golden Carrot",
-            "Melon Slice", "Melon Block", "Enchanted Melon Slice", "Enchanted Melon",
-            "Pumpkin", "Enchanted Pumpkin", "Polished Pumpkin",
-            "Sugar Cane", "Enchanted Sugar", "Enchanted Sugar Cane",
-            "Cactus", "Enchanted Cactus Green", "Enchanted Cactus",
-            "Red Mushroom", "Enchanted Red Mushroom", "Enchanted Red Mushroom Block",
-            "Brown Mushroom", "Enchanted Brown Mushroom", "Enchanted Brown Mushroom Block",
-            "Cocoa Beans", "Enchanted Cocoa Beans", "Enchanted Cookie",
-            "Nether Wart", "Enchanted Nether Wart", "Mutant Nether Wart",
-            "Sunflower", "Enchanted Sunflower", "Compacted Sunflower",
-            "Moonflower", "Enchanted Moonflower", "Compacted Moonflower",
-            "Wild Rose", "Enchanted Wild Rose", "Compacted Wild Rose");
+    @Override
+    public int getPriority() { return 2; } // T2
 
-    // Items that we care about tracking via inventory diff
-    // (pest drops, misc garden items that go to inventory)
-    private static final Set<String> TRACKED_INVENTORY_ITEMS = Set.of(
-            "Squeaky Toy", "Squeaky Mousemat", "Fire in a Bottle",
-            "Mantid Claw", "Overclocker 3000",
-            "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
-            "Pest Shard",
-            "Cropie", "Squash", "Fermento",
-            "Tool EXP Capsule");
+    @Override
+    public void onChatMessage(Component component) {
+        // InventoryTracker does not handle chat messages.
+    }
+
+    @Override
+    public void onTick(Minecraft client) {
+        tick(client);
+    }
 
     /**
      * Called when the player switches worlds / joins a server.
@@ -132,14 +124,14 @@ public class InventoryTracker {
                 int diff = current - previous;
 
                 // Skip crops (tracked by SackTracker)
-                if (CROP_ITEMS.contains(name)) continue;
+                if (ItemConstants.CROPS.contains(name)) continue;
 
                 // Skip ignored items
                 if (ignoredItems.containsKey(name)) continue;
 
                 // Only track items we care about
-                if (TRACKED_INVENTORY_ITEMS.contains(name)) {
-                    ProfitManager.addInventoryDrop(name, diff);
+                if (ItemConstants.TRACKED_INVENTORY_ITEMS.contains(name)) {
+                    ProfitManager.getInstance().addInventoryDrop(name, diff);
 
                     ClientUtils.sendDebugMessage(client,
                             "[Inv] +" + diff + " " + name);

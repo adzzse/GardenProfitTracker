@@ -1,470 +1,78 @@
 package com.gardenprofit.mod.modules;
 
 import com.gardenprofit.mod.GardenProfitConfig;
-import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.Style;
+import com.gardenprofit.mod.util.ClientUtils;
+import net.minecraft.client.Minecraft;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import net.minecraft.client.Minecraft;
-import com.gardenprofit.mod.util.ClientUtils;
 
-public class ProfitManager {
-    private static final Map<String, Long> sessionCounts = new LinkedHashMap<>();
-    private static final Map<String, Long> dailyCounts = new LinkedHashMap<>();
-    private static final Map<String, Long> lifetimeCounts = new LinkedHashMap<>();
-    private static final Map<String, Double> bazaarPrices = new LinkedHashMap<>();
-    private static final Map<String, Long> petLvl1Prices = new java.util.HashMap<>();
-    private static final Map<String, Long> petMaxLvlPrices = new java.util.HashMap<>();
-    private static long lastBazaarFetchTime = 0;
-    private static long lastPurseBalance = -1;
-    private static String lastDailyResetDate = getCurrentDateString();
+/**
+ * Facade for profit tracking.  Delegates to:
+ * <ul>
+ *   <li>{@link ProfitState}  -- session/daily/lifetime counts</li>
+ *   <li>{@link ProfitStorage} -- JSON persistence and daily resets</li>
+ *   <li>{@link BazaarFetcher} -- price lookups and HTTP fetching</li>
+ *   <li>{@link ItemConstants} -- shared item data &amp; categories</li>
+ * </ul>
+ *
+ * Methods that the rest of the mod calls (HUD renderer, commands, etc.)
+ * are kept here so the public API surface remains unchanged.
+ */
+public final class ProfitManager {
 
-    // Spray cost tracking: quantity is tracked separately from coins
-    private static long spraySessionQuantity = 0;
-    private static long sprayDailyQuantity = 0;
-    private static long sprayLifetimeQuantity = 0;
-    public static volatile boolean isSprayPhaseActive = false;
+    private static final ProfitManager INSTANCE = new ProfitManager();
 
-    public static void startSprayPhase() {
-        if (!isSprayPhaseActive) {
-            isSprayPhaseActive = true;
-        }
-    }
+    private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)\u00A7[0-9A-FK-OR]");
 
-    public static void stopSprayPhase() {
-        if (isSprayPhaseActive) {
-            isSprayPhaseActive = false;
-        }
-    }
+    private long lastPurseBalance = -1;
+
+    // Spray phase flag
+    private volatile boolean isSprayPhaseActive = false;
+
+    private ProfitManager() {}
+
+    public static ProfitManager getInstance() { return INSTANCE; }
+
+    // ── Spray phase (unchanged API) ─────────────────────────────────────
+
+    public void startSprayPhase() { isSprayPhaseActive = true; }
+    public void stopSprayPhase() { isSprayPhaseActive = false; }
+    public boolean isSprayPhaseActive() { return isSprayPhaseActive; }
+
+    // ── Static convenience wrappers (backwards compatibility) ───────────
 
     public static void resetSession() {
-        sessionCounts.clear();
-        spraySessionQuantity = 0;
+        ProfitState.getInstance().resetSession();
+        PetXpTracker.reset();
+        INSTANCE.lastPurseBalance = -1;
     }
 
     /**
-     * Called on world join to seed the purse baseline so the first
-     * purse read doesn't get silently consumed.
+     * Called on world join to seed the purse baseline.
      */
     public static void onWorldSwitch(Minecraft client) {
         long currentPurse = ClientUtils.getPurse(client);
         if (currentPurse != -1) {
-            lastPurseBalance = currentPurse;
+            INSTANCE.lastPurseBalance = currentPurse;
             ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse baseline set to " + currentPurse + " on join.");
         } else {
-            lastPurseBalance = -1;
+            INSTANCE.lastPurseBalance = -1;
             ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse not available on join, will seed on first read.");
         }
     }
 
-    private static final java.io.File CONFIG_DIR = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
-            .resolve("gardenprofit").toFile();
-    private static final java.io.File LIFETIME_FILE = new java.io.File(CONFIG_DIR, "lifetime.json");
-    private static final java.io.File DAILY_FILE = new java.io.File(CONFIG_DIR, "daily.json");
-    private static final java.io.File BAZAAR_CACHE_FILE = new java.io.File(CONFIG_DIR, "bazaar_cache.json");
+    public static void loadLifetime() { ProfitStorage.getInstance().loadLifetime(); }
+    public static void loadDaily() { ProfitStorage.getInstance().loadDaily(); }
 
-    // Old file paths for migration
-    private static final java.io.File OLD_LIFETIME_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
-            .resolve("pest_macro_profit_lifetime.json").toFile();
-    private static final java.io.File OLD_DAILY_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
-            .resolve("pest_macro_profit_daily.json").toFile();
-    private static final java.io.File OLD_BAZAAR_CACHE_FILE = net.fabricmc.loader.api.FabricLoader.getInstance().getConfigDir()
-            .resolve("gardenprofit_bazaar_cache.json").toFile();
-    private static final com.google.gson.Gson GSON = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+    // ── Drop recording (delegates to ProfitState) ───────────────────────
 
-    private static final Set<String> CROPS_SET = Set.of(
-            "Wheat", "Enchanted Wheat", "Enchanted Hay Bale",
-            "Seeds", "Enchanted Seeds", "Box of Seeds",
-            "Potato", "Enchanted Potato", "Enchanted Baked Potato",
-            "Carrot", "Enchanted Carrot", "Enchanted Golden Carrot",
-            "Melon Slice", "Melon Block", "Enchanted Melon Slice", "Enchanted Melon",
-            "Pumpkin", "Enchanted Pumpkin", "Polished Pumpkin",
-            "Sugar Cane", "Enchanted Sugar", "Enchanted Sugar Cane",
-            "Cactus", "Enchanted Cactus Green", "Enchanted Cactus",
-            "Red Mushroom", "Enchanted Red Mushroom", "Enchanted Red Mushroom Block",
-            "Brown Mushroom", "Enchanted Brown Mushroom", "Enchanted Brown Mushroom Block",
-            "Cocoa Beans", "Enchanted Cocoa Beans", "Enchanted Cookie",
-            "Nether Wart", "Enchanted Nether Wart", "Mutant Nether Wart",
-            "Sunflower", "Enchanted Sunflower", "Compacted Sunflower",
-            "Moonflower", "Enchanted Moonflower", "Compacted Moonflower",
-            "Wild Rose", "Enchanted Wild Rose", "Compacted Wild Rose");
-
-    private static final Set<String> PEST_ITEMS_SET = Set.of(
-            "Beady Eyes", "Chirping Stereo", "Sunder VI Book", "Clipped Wings",
-            "Bookworm's Favorite Book", "Atmospheric Filter", "Wriggling Larva",
-            "Pesterminator I Book", "Squeaky Toy", "Squeaky Mousemat",
-            "Fire in a Bottle", "Vermin Vaporizer Chip", "Mantid Claw",
-            "Overclocker 3000",
-            "Dung", "Honey Jar", "Plant Matter", "Tasty Cheese", "Compost", "Jelly",
-            "Pest Shard");
-
-    private static final Set<String> PETS_SET = Set.of("Epic Slug", "Legendary Slug", "Rat");
-
-    private static final Set<String> MISC_DROPS_SET = Set.of("Cropie", "Squash", "Fermento", "Helianthus",
-            "Tool EXP Capsule", "Pet XP", "Purse");
-
-    private static final Set<String> BASE_CROPS = Set.of(
-            "Wheat", "Potato", "Carrot", "Melon Slice", "Pumpkin",
-            "Sugar Cane", "Cactus", "Nether Wart", "Cocoa Beans",
-            "Red Mushroom", "Brown Mushroom",
-            "Sunflower", "Moonflower", "Wild Rose", "Seeds");
-
-    private static final Map<String, Double> TRACKED_ITEMS = Map.ofEntries(
-            // Crops
-            Map.entry("Wheat", 6.0), Map.entry("Enchanted Wheat", 960.0), Map.entry("Enchanted Hay Bale", 153600.0),
-            Map.entry("Seeds", 3.0), Map.entry("Enchanted Seeds", 480.0), Map.entry("Box of Seeds", 76800.0),
-            Map.entry("Potato", 3.0), Map.entry("Enchanted Potato", 480.0),
-            Map.entry("Enchanted Baked Potato", 76800.0),
-            Map.entry("Carrot", 3.0), Map.entry("Enchanted Carrot", 480.0),
-            Map.entry("Enchanted Golden Carrot", 76800.0),
-            Map.entry("Melon Slice", 2.0), Map.entry("Melon Block", 18.0), Map.entry("Enchanted Melon Slice", 320.0),
-            Map.entry("Enchanted Melon", 51200.0),
-            Map.entry("Pumpkin", 10.0), Map.entry("Enchanted Pumpkin", 1600.0), Map.entry("Polished Pumpkin", 256000.0),
-            Map.entry("Sugar Cane", 4.0), Map.entry("Enchanted Sugar", 640.0),
-            Map.entry("Enchanted Sugar Cane", 102400.0),
-            Map.entry("Cactus", 4.0), Map.entry("Enchanted Cactus Green", 640.0),
-            Map.entry("Enchanted Cactus", 102400.0),
-            Map.entry("Mushroom", 10.0), Map.entry("Red Mushroom", 10.0), Map.entry("Brown Mushroom", 10.0),
-            Map.entry("Enchanted Red Mushroom", 1600.0), Map.entry("Enchanted Brown Mushroom", 1600.0),
-            Map.entry("Enchanted Red Mushroom Block", 256000.0), Map.entry("Enchanted Brown Mushroom Block", 256000.0),
-            Map.entry("Cocoa Beans", 3.0), Map.entry("Enchanted Cocoa Beans", 480.0),
-            Map.entry("Enchanted Cookie", 76800.0),
-            Map.entry("Nether Wart", 4.0), Map.entry("Enchanted Nether Wart", 640.0),
-            Map.entry("Mutant Nether Wart", 102400.0),
-            Map.entry("Sunflower", 4.0), Map.entry("Enchanted Sunflower", 640.0),
-            Map.entry("Compacted Sunflower", 102400.0),
-            Map.entry("Moonflower", 4.0), Map.entry("Enchanted Moonflower", 640.0),
-            Map.entry("Compacted Moonflower", 102400.0),
-            Map.entry("Wild Rose", 4.0), Map.entry("Enchanted Wild Rose", 640.0),
-            Map.entry("Compacted Wild Rose", 102400.0),
-            // Pest Items
-            Map.entry("Beady Eyes", 25000.0), Map.entry("Chirping Stereo", 100000.0), Map.entry("Sunder VI Book", 0.0),
-            Map.entry("Clipped Wings", 25000.0), Map.entry("Bookworm's Favorite Book", 10000.0),
-            Map.entry("Atmospheric Filter", 100000.0),
-            Map.entry("Wriggling Larva", 250000.0), Map.entry("Pesterminator I Book", 0.0),
-            Map.entry("Squeaky Toy", 10000.0),
-            Map.entry("Squeaky Mousemat", 1000000.0), Map.entry("Fire in a Bottle", 100000.0),
-            Map.entry("Vermin Vaporizer Chip", 0.0),
-            Map.entry("Mantid Claw", 75000.0),
-            Map.entry("Overclocker 3000", 250000.0),
-            Map.entry("Dung", 0.0), Map.entry("Honey Jar", 0.0), Map.entry("Plant Matter", 0.0),
-            Map.entry("Tasty Cheese", 0.0), Map.entry("Compost", 0.0), Map.entry("Jelly", 0.0),
-            // Pets
-            Map.entry("Epic Slug", 500000.0), Map.entry("Legendary Slug", 5000000.0), Map.entry("Rat", 5000.0),
-            // Misc Drops
-            Map.entry("Cropie", 25000.0), Map.entry("Squash", 75000.0), Map.entry("Fermento", 250000.0),
-            Map.entry("Helianthus", 0.0), Map.entry("Tool EXP Capsule", 100000.0),
-            // Pet XP (price per XP point, will be fetched)
-            Map.entry("Pet XP", 0.0),
-            Map.entry("Pest Shard", 0.0),
-            // AH Items
-            Map.entry("Biofuel", 0.0), Map.entry("Farming Exp Boost", 0.0),
-            Map.entry("Harvest Harbinger V Potion", 0.0),
-            Map.entry("Velvet Top Hat", 0.0), Map.entry("Cashmere Hat", 0.0), Map.entry("Satin Trousers", 0.0),
-            Map.entry("Oxford Shoes", 0.0), Map.entry("Space Helmet", 0.0), Map.entry("Wild Strawberry Dye", 0.0),
-            Map.entry("Copper Dye", 0.0),
-            // Visitor / Rare Drops
-            Map.entry("Overgrown Grass", 0.0), Map.entry("Flowering Bouqet", 0.0), Map.entry("Green Bandana", 0.0),
-            Map.entry("Hypercharge Chip", 0.0), Map.entry("Quickdraw Chip", 0.0), Map.entry("Superboom TNT", 0.0),
-            Map.entry("Green Candy", 0.0), Map.entry("Purple Candy", 0.0), Map.entry("Ice Essence", 0.0),
-            Map.entry("Diamond Essence", 0.0), Map.entry("Gold Essence", 0.0), Map.entry("Jacob's Ticket", 0.0),
-            Map.entry("Turbo-Cacti I Book", 0.0), Map.entry("Turbo-Cane I Book", 0.0),
-            Map.entry("Turbo-Carrot I Book", 0.0),
-            Map.entry("Turbo-Cocoa I Book", 0.0), Map.entry("Turbo-Melon I Book", 0.0),
-            Map.entry("Turbo-Moonflower I Book", 0.0),
-            Map.entry("Turbo-Mushrooms I Book", 0.0), Map.entry("Turbo-Potato I Book", 0.0),
-            Map.entry("Turbo-Pumpkin I Book", 0.0),
-            Map.entry("Turbo-Rose I Book", 0.0), Map.entry("Turbo-Sunflower I Book", 0.0),
-            Map.entry("Turbo-Warts I Book", 0.0),
-            Map.entry("Turbo-Wheat I Book", 0.0), Map.entry("Cultivating I Book", 0.0),
-            Map.entry("Delicate V Book", 0.0),
-            Map.entry("Replenish I Book", 0.0), Map.entry("Dedication IV Book", 0.0), Map.entry("Jungle Key", 0.0),
-            Map.entry("Pet Cake", 0.0), Map.entry("Fine Flour", 0.0), Map.entry("Arachne Fragment", 0.0),
-            Map.entry("Purse", 1.0));
-
-    private static final Map<String, String> BAZAAR_MAPPING = Map.ofEntries(
-            Map.entry("Sunder VI Book", "ENCHANTMENT_SUNDER_6"),
-            Map.entry("Pesterminator I Book", "ENCHANTMENT_PESTERMINATOR_1"),
-            Map.entry("Dung", "DUNG"),
-            Map.entry("Honey Jar", "HONEY_JAR"),
-            Map.entry("Plant Matter", "PLANT_MATTER"),
-            Map.entry("Tasty Cheese", "CHEESE_FUEL"),
-            Map.entry("Compost", "COMPOST"),
-            Map.entry("Jelly", "JELLY"),
-            Map.entry("Helianthus", "HELIANTHUS"),
-            Map.entry("Vermin Vaporizer Chip", "VERMIN_VAPORIZER_GARDEN_CHIP"),
-            Map.entry("ENCHANTMENT_GREEN_THUMB_1", "ENCHANTMENT_GREEN_THUMB_1"),
-            Map.entry("Pest Shard", "SHARD_PEST"),
-            // Visitor / Rare Drops Mappings
-            Map.entry("Overgrown Grass", "OVERGROWN_GRASS"),
-            Map.entry("Flowering Bouqet", "FLOWERING_BOUQUET"),
-            Map.entry("Green Bandana", "GREEN_BANDANA"),
-            Map.entry("Hypercharge Chip", "HYPERCHARGE_GARDEN_CHIP"),
-            Map.entry("Quickdraw Chip", "QUICKDRAW_GARDEN_CHIP"),
-            Map.entry("Superboom TNT", "SUPERBOOM_TNT"),
-            Map.entry("Green Candy", "GREEN_CANDY"),
-            Map.entry("Purple Candy", "PURPLE_CANDY"),
-            Map.entry("Ice Essence", "ESSENCE_ICE"),
-            Map.entry("Diamond Essence", "ESSENCE_DIAMOND"),
-            Map.entry("Gold Essence", "ESSENCE_GOLD"),
-            Map.entry("Jacob's Ticket", "JACOBS_TICKET"),
-            Map.entry("Turbo-Cacti I Book", "ENCHANTMENT_TURBO_CACTUS_1"),
-            Map.entry("Turbo-Cane I Book", "ENCHANTMENT_TURBO_CANE_1"),
-            Map.entry("Turbo-Carrot I Book", "ENCHANTMENT_TURBO_CARROT_1"),
-            Map.entry("Turbo-Cocoa I Book", "ENCHANTMENT_TURBO_COCO_1"),
-            Map.entry("Turbo-Melon I Book", "ENCHANTMENT_TURBO_MELON_1"),
-            Map.entry("Turbo-Moonflower I Book", "ENCHANTMENT_TURBO_MOONFLOWER_1"),
-            Map.entry("Turbo-Mushrooms I Book", "ENCHANTMENT_TURBO_MUSHROOMS_1"),
-            Map.entry("Turbo-Potato I Book", "ENCHANTMENT_TURBO_POTATO_1"),
-            Map.entry("Turbo-Pumpkin I Book", "ENCHANTMENT_TURBO_PUMPKIN_1"),
-            Map.entry("Turbo-Rose I Book", "ENCHANTMENT_TURBO_ROSE_1"),
-            Map.entry("Turbo-Sunflower I Book", "ENCHANTMENT_TURBO_SUNFLOWER_1"),
-            Map.entry("Turbo-Warts I Book", "ENCHANTMENT_TURBO_WARTS_1"),
-            Map.entry("Turbo-Wheat I Book", "ENCHANTMENT_TURBO_WHEAT_1"),
-            Map.entry("Cultivating I Book", "ENCHANTMENT_CULTIVATING_1"),
-            Map.entry("Delicate V Book", "ENCHANTMENT_DELICATE_5"),
-            Map.entry("Replenish I Book", "ENCHANTMENT_REPLENISH_1"),
-            Map.entry("Dedication IV Book", "ENCHANTMENT_DEDICATION_4"),
-            Map.entry("Jungle Key", "JUNGLE_KEY"),
-            Map.entry("Pet Cake", "PET_CAKE"),
-            Map.entry("Fine Flour", "FINE_FLOUR"),
-            Map.entry("Arachne Fragment", "ARACHNE_FRAGMENT"),
-            // AH Items Mappings
-            Map.entry("Biofuel", "BIOFUEL"),
-            Map.entry("Farming Exp Boost", "PET_ITEM_FARMING_SKILL_BOOST_UNCOMMON"),
-            Map.entry("Harvest Harbinger V Potion", "POTION_harvest_harbinger"),
-            Map.entry("Velvet Top Hat", "VELVET_TOP_HAT"),
-            Map.entry("Cashmere Hat", "CASHMERE_JACKET"),
-            Map.entry("Satin Trousers", "SATIN_TROUSERS"),
-            Map.entry("Oxford Shoes", "OXFORD_SHOES"),
-            Map.entry("Space Helmet", "DCTR_SPACE_HELM"),
-            Map.entry("Wild Strawberry Dye", "DYE_WILD_STRAWBERRY"),
-            Map.entry("Copper Dye", "DYE_COPPER"));
-
-    private static final Pattern PEST_PATTERN = Pattern.compile("received\\s+(\\d+)x\\s+(.+?)\\s+for\\s+killing",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern RARE_DROP_PATTERN = Pattern.compile(
-            "(?:UNCOMMON|RARE|CRAZY RARE|PRAY TO RNGESUS) DROP!\\s+(?:You dropped\\s+)?(?:an?\\s+)?(?:(\\d+)x\\s+)?(.+?)(?=\\s*(?:§[0-9a-fk-or])*\\s*[\\(!]|$)",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern PET_DROP_PATTERN = Pattern.compile(
-            "PET DROP!\\s+.*?§([0-9a-f])(?:§[0-9a-fk-or])*\\s*(?:(?:COMMON|UNCOMMON|RARE|EPIC|LEGENDARY|MYTHIC)\\s+(?:§[0-9a-fk-or])*)?(.+?)(?=\\s*(?:§[0-9a-fk-or])*\\s*[\\(!]|$)",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern RARE_CROP_PATTERN = Pattern.compile(
-            "RARE CROP!\\s+(.+?)(?=\\s*(?:§[0-9a-fk-or])*\\s*[\\(!]|$)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern OVERFLOW_DROP_PATTERN = Pattern.compile(
-            "OVERFLOW!\\s+.*?\\s+has\\s+just\\s+dropped\\s+(?:an?\\s+)?(?:(\\d+)x\\s+)?(.+?)(?=\\s*\\(!|!|$)",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern PEST_SHARD_PATTERN = Pattern.compile(
-            "charmed\\s+a\\s+Pest\\s+and\\s+captured\\s+(?:its\\s+Shard|(\\d+)\\s+Shards)",
-            Pattern.CASE_INSENSITIVE);
-
-    private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)§[0-9A-FK-OR]");
-
-    private static final Pattern BAZAAR_BUY_PATTERN = Pattern.compile(
-            "\\[Bazaar\\] Bought (\\d+)x (.+?) for ([\\d,.]+) coins!",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern SPRAY_PATTERN = Pattern.compile(
-            "SPRAYONATOR! You sprayed Plot - \\d+ with (.+?)(?:!|$)",
-            Pattern.CASE_INSENSITIVE);
-    private static long lastBazaarSprayBuyTime = 0;
-    // Items recently bought from bazaar -- SackTracker/InventoryTracker should ignore these
-    private static final Map<String, Long> recentBazaarPurchases = new LinkedHashMap<>();
-    private static final long BAZAAR_PURCHASE_IGNORE_MS = 15_000;
-    private static boolean isTrackingVisitorRewards = false;
-    private static boolean copperSeenInRewards = false;
-
-    public static void handleChatMessage(Component component) {
-        String text = toLegacyText(component);
-        // PET DROP needs raw text to detect color-coded rarity
-        Matcher petMatcher = PET_DROP_PATTERN.matcher(text);
-        if (petMatcher.find()) {
-            String colorCode = petMatcher.group(1).toLowerCase(); // 5 = Epic, 6 = Legendary, 9 = Rare
-            String petName = petMatcher.group(2).trim();
-            String finalName = petName;
-
-            if (petName.equalsIgnoreCase("Slug")) {
-                if (colorCode.equals("5") || colorCode.equals("d")) {
-                    finalName = "Epic Slug";
-                } else if (colorCode.equals("6")) {
-                    finalName = "Legendary Slug";
-                }
-            } else if (petName.equalsIgnoreCase("Rat")) {
-                finalName = "Rat";
-            }
-            addDrop(finalName, 1);
-            return;
-        }
-
-        // Plain text processing for standard drops
-        String plainText = STRIP_COLOR_PATTERN.matcher(text).replaceAll("").trim();
-
-        Matcher overflowMatcher = OVERFLOW_DROP_PATTERN.matcher(plainText);
-        if (overflowMatcher.find()) {
-            try {
-                String countStr = overflowMatcher.group(1);
-                int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-                String itemName = overflowMatcher.group(2).trim();
-                addDrop(itemName, count);
-                return;
-            } catch (Exception ignored) {
-            }
-        }
-
-        Matcher pestMatcher = PEST_PATTERN.matcher(plainText);
-        if (pestMatcher.find()) {
-            try {
-                int count = Integer.parseInt(pestMatcher.group(1));
-                String itemName = pestMatcher.group(2).trim();
-                addDrop(itemName, count);
-                return;
-            } catch (Exception ignored) {
-            }
-        }
-
-        Matcher rareMatcher = RARE_DROP_PATTERN.matcher(plainText);
-        if (rareMatcher.find()) {
-            try {
-                String countStr = rareMatcher.group(1);
-                int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-                String itemName = rareMatcher.group(2).trim();
-                addDrop(itemName, count);
-            } catch (Exception ignored) {
-            }
-        }
-
-        Matcher shardMatcher = PEST_SHARD_PATTERN.matcher(plainText);
-        if (shardMatcher.find()) {
-            try {
-                String countStr = shardMatcher.group(1);
-                int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-                addDrop("Pest Shard", count);
-            } catch (Exception ignored) {
-            }
-        }
-
-        Matcher bazaarMatcher = BAZAAR_BUY_PATTERN.matcher(plainText);
-        if (bazaarMatcher.find()) {
-            try {
-                int count = Integer.parseInt(bazaarMatcher.group(1));
-                String itemName = bazaarMatcher.group(2).trim();
-                double coins = Double.parseDouble(bazaarMatcher.group(3).replace(",", ""));
-                ClientUtils.sendDebugMessage(Minecraft.getInstance(),
-                        "Bazaar buy detected: " + count + "x " + itemName + " for " + coins + " coins");
-                // Track the coin cost as visitor cost
-                addVisitorCost(Math.round(coins));
-                // Mark this item as recently purchased so sack/inventory trackers ignore it
-                recentBazaarPurchases.put(itemName, System.currentTimeMillis() + BAZAAR_PURCHASE_IGNORE_MS);
-                InventoryTracker.ignoreItem(itemName, BAZAAR_PURCHASE_IGNORE_MS);
-                lastBazaarSprayBuyTime = System.currentTimeMillis();
-            } catch (Exception ignored) {
-            }
-        }
-
-        // ── Visitor Rewards Tracking ──
-        if (plainText.equalsIgnoreCase("REWARDS")) {
-            isTrackingVisitorRewards = true;
-            copperSeenInRewards = false;
-            return;
-        }
-
-        if (isTrackingVisitorRewards) {
-            if (plainText.isEmpty()) {
-                isTrackingVisitorRewards = false;
-                return;
-            }
-
-            if (plainText.contains("Farming XP") || plainText.contains("Garden Experience")) {
-                return;
-            }
-
-            if (plainText.contains("Copper")) {
-                copperSeenInRewards = true;
-            }
-
-            if (copperSeenInRewards) {
-                // Parse reward line
-                Matcher m = Pattern.compile("^\\+?([\\d,.]+)[xX]?\\s+(.+)").matcher(plainText);
-                if (m.find()) {
-                    String item = m.group(2).trim();
-                    String countStr = m.group(1).replace(",", "");
-                    long count = 1;
-                    try {
-                        if (countStr.toLowerCase().endsWith("k")) {
-                            count = (long) (Double.parseDouble(countStr.substring(0, countStr.length() - 1)) * 1000);
-                        } else {
-                            count = Long.parseLong(countStr);
-                        }
-                    } catch (Exception ignored) {
-                    }
-                    addVisitorGain(item, count);
-                } else {
-                    addVisitorGain(plainText, 1);
-                }
-            }
-            return;
-        }
-
-        Matcher sprayMatcher = SPRAY_PATTERN.matcher(plainText);
-        if (sprayMatcher.find()) {
-            String baitName = sprayMatcher.group(1).trim();
-            long now = System.currentTimeMillis();
-            if (now - lastBazaarSprayBuyTime < 15000) {
-                ClientUtils.sendDebugMessage(Minecraft.getInstance(),
-                        "Sprayonator use ignored due to recent Bazaar buy.");
-            } else {
-                ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Sprayonator use detected (" + baitName + ").");
-                // Track the spray material as a cost, not a negative drop
-                double baitPrice = getItemPrice(baitName);
-                if (baitPrice <= 0) baitPrice = 1.0;
-                addSprayCost(1, Math.round(baitPrice));
-            }
-        }
-    }
-
-    private static String toLegacyText(Component component) {
-        StringBuilder sb = new StringBuilder();
-        component.visit((style, part) -> {
-            net.minecraft.network.chat.TextColor color = style.getColor();
-            if (color != null) {
-                int rgb = color.getValue();
-                String code = "f";
-                if (rgb == 16755200)
-                    code = "6"; // Gold
-                else if (rgb == 11141290)
-                    code = "5"; // Dark Purple
-                else if (rgb == 5636095)
-                    code = "b"; // Aqua
-                else if (rgb == 16733695)
-                    code = "d"; // Light Purple
-                else if (rgb == 5592405)
-                    code = "8"; // Dark Gray
-                else if (rgb == 11184810)
-                    code = "7"; // Gray
-                else if (rgb == 5592575)
-                    code = "9"; // Blue
-                else if (rgb == 5635925)
-                    code = "a"; // Green
-                else if (rgb == 16711680)
-                    code = "c"; // Red
-                else if (rgb == 16777045)
-                    code = "e"; // Yellow
-                sb.append("§").append(code);
-            }
-            if (style.isBold())
-                sb.append("§l");
-            if (style.isItalic())
-                sb.append("§o");
-            sb.append(part);
-            return java.util.Optional.empty();
-        }, Style.EMPTY);
-        return sb.toString();
-    }
-
-    private static void addDrop(String itemName, long count) {
-        // Handle items with suffix counts like "Mutant Nether Wart X9"
+    /**
+     * Core method: normalizes the item name and adds the drop to all tiers.
+     */
+    public void addDrop(String itemName, long count) {
         String processedName = STRIP_COLOR_PATTERN.matcher(itemName).replaceAll("").trim();
         long multiplier = 1;
 
@@ -479,20 +87,13 @@ public class ProfitManager {
 
         long finalCount = count * multiplier;
 
-        // Group all Vinyl items together and skip them (deleted by personal de-aggregator)
-        if (processedName.toLowerCase().endsWith("vinyl")) {
-            return;
-        }
+        // Skip vinyl and rune items
+        if (processedName.toLowerCase().endsWith("vinyl")) return;
+        if (processedName.toLowerCase().contains("rune")) return;
 
-        // Skip rune items (deleted by personal de-aggregator)
-        if (processedName.toLowerCase().contains("rune")) {
-            return;
-        }
-
-        // Find the tracked item name that matches (case-insensitive) for pretty
-        // formatting
+        // Match against tracked items for pretty formatting
         String matchedName = null;
-        for (String tracked : TRACKED_ITEMS.keySet()) {
+        for (String tracked : ItemConstants.TRACKED_ITEMS.keySet()) {
             if (tracked.equalsIgnoreCase(processedName)) {
                 matchedName = tracked;
                 break;
@@ -501,37 +102,23 @@ public class ProfitManager {
 
         if (matchedName == null) {
             if (processedName.toLowerCase().startsWith("pet xp (")) {
-                matchedName = processedName; // Preserve casing for Pet XP
+                matchedName = processedName;
             } else {
                 matchedName = normalizeName(processedName);
             }
         }
 
-        // Check for daily reset
-        checkDailyReset();
-
-        sessionCounts.put(matchedName, sessionCounts.getOrDefault(matchedName, 0L) + finalCount);
-
-        dailyCounts.put(matchedName, dailyCounts.getOrDefault(matchedName, 0L) + finalCount);
-        lifetimeCounts.put(matchedName, lifetimeCounts.getOrDefault(matchedName, 0L) + finalCount);
-        needsSave = true;
+        ProfitStorage.getInstance().checkDailyReset();
+        ProfitState.getInstance().addDrop(matchedName, finalCount);
     }
 
-    /**
-     * Called by SackTracker when items are added to sacks (from farming).
-     */
-    public static void addSackDrop(String itemName, long count) {
-        addDrop(itemName, count);
-    }
+    /** Called by SackTracker when items are added to sacks. */
+    public void addSackDrop(String itemName, long count) { addDrop(itemName, count); }
 
-    /**
-     * Called by InventoryTracker when non-sack items appear in inventory.
-     */
-    public static void addInventoryDrop(String itemName, long count) {
-        addDrop(itemName, count);
-    }
+    /** Called by InventoryTracker when non-sack items appear in inventory. */
+    public void addInventoryDrop(String itemName, long count) { addDrop(itemName, count); }
 
-    public static void addVisitorGain(String itemName, long count) {
+    public void addVisitorGain(String itemName, long count) {
         String cleanName = STRIP_COLOR_PATTERN.matcher(itemName).replaceAll("").replace("+", "").trim();
         long multiplier = 1;
         Matcher m = Pattern.compile("\\s+[xX](\\d+)$").matcher(cleanName);
@@ -546,119 +133,224 @@ public class ProfitManager {
         String key = cleanName.startsWith("[Visitor] ") ? cleanName : "[Visitor] " + cleanName;
         long totalCount = count * multiplier;
 
-        checkDailyReset();
-
-        sessionCounts.put(key, sessionCounts.getOrDefault(key, 0L) + totalCount);
-        dailyCounts.put(key, dailyCounts.getOrDefault(key, 0L) + totalCount);
-        lifetimeCounts.put(key, lifetimeCounts.getOrDefault(key, 0L) + totalCount);
-        saveLifetime();
-        saveDaily();
+        ProfitStorage.getInstance().checkDailyReset();
+        ProfitState.getInstance().addVisitorGain(key, totalCount);
+        ProfitStorage.getInstance().saveLifetime();
+        ProfitStorage.getInstance().saveDaily();
     }
 
-    public static void addVisitorCost(long coinsSpent) {
-        String key = "[Visitor] Visitor Cost";
-        checkDailyReset();
-        sessionCounts.put(key, sessionCounts.getOrDefault(key, 0L) - coinsSpent);
-        dailyCounts.put(key, dailyCounts.getOrDefault(key, 0L) - coinsSpent);
-        lifetimeCounts.put(key, lifetimeCounts.getOrDefault(key, 0L) - coinsSpent);
-        saveLifetime();
-        saveDaily();
+    public void addVisitorCost(long coinsSpent) {
+        ProfitStorage.getInstance().checkDailyReset();
+        ProfitState.getInstance().addVisitorCost(coinsSpent);
+        ProfitStorage.getInstance().saveLifetime();
+        ProfitStorage.getInstance().saveDaily();
     }
 
-    public static void addSprayCost(int quantity, long coins) {
-        String key = "[Spray] Sprayonator";
-        checkDailyReset();
-        spraySessionQuantity += quantity;
-        sprayDailyQuantity += quantity;
-        sprayLifetimeQuantity += quantity;
-        sessionCounts.put(key, sessionCounts.getOrDefault(key, 0L) - coins);
-        dailyCounts.put(key, dailyCounts.getOrDefault(key, 0L) - coins);
-        lifetimeCounts.put(key, lifetimeCounts.getOrDefault(key, 0L) - coins);
-        saveLifetime();
-        saveDaily();
+    public void addSprayCost(int quantity, long coins) {
+        ProfitStorage.getInstance().checkDailyReset();
+        ProfitState.getInstance().addSprayCost(quantity, coins);
+        ProfitStorage.getInstance().saveLifetime();
+        ProfitStorage.getInstance().saveDaily();
     }
 
-    /**
-     * Returns true if the given item was recently purchased from the Bazaar
-     * and should be ignored by SackTracker / InventoryTracker.
-     */
+    /** Delegates to ChatMessageParser for bazaar purchase ignore checking. */
     public static boolean isBazaarPurchaseIgnored(String itemName) {
-        Long expiry = recentBazaarPurchases.get(itemName);
-        if (expiry == null) return false;
-        if (System.currentTimeMillis() > expiry) {
-            recentBazaarPurchases.remove(itemName);
-            return false;
-        }
-        return true;
+        return ChatMessageParser.getInstance().isBazaarPurchaseIgnored(itemName);
+    }
+
+    public void addPetXp(String petName, long xpAmount) {
+        if (xpAmount <= 0) return;
+        addDrop("Pet XP (" + petName + ")", xpAmount);
+    }
+
+    // ── Queries (used by HUD renderer and commands) ─────────────────────
+
+    public static long getSprayQuantity(String mode) {
+        return ProfitState.getInstance().getSprayQuantity(mode);
     }
 
     public static long getSprayQuantity(boolean lifetime) {
-        return lifetime ? sprayLifetimeQuantity : spraySessionQuantity;
+        return getSprayQuantity(lifetime ? "lifetime" : "session");
     }
 
-    public static long getSprayQuantity(String mode) {
-        if ("daily".equals(mode)) return sprayDailyQuantity;
-        if ("lifetime".equals(mode)) return sprayLifetimeQuantity;
-        return spraySessionQuantity;
+    public double getItemPrice(String itemName) {
+        return BazaarFetcher.getInstance().getItemPrice(itemName);
+    }
+
+    public static boolean isPredefinedTrackedItem(String itemName) {
+        return ItemConstants.isPredefinedTrackedItem(itemName);
     }
 
     public static String getCategorizedName(String name) {
         if (name.equals("[Spray] Sprayonator")) {
-            return "§c§l[COST] §fSprayonator";
+            return "\u00A7c\u00A7l[COST] \u00A7fSprayonator";
         }
         if (name.equals("[Visitor] Visitor Cost")) {
-            return "§c§l[COST] §fVisitor Cost";
+            return "\u00A7c\u00A7l[COST] \u00A7fVisitor Cost";
         }
         if (name.startsWith("[Visitor] ")) {
-            return "§5§l[VISITOR] §f" + name.substring(10);
+            return "\u00A75\u00A7l[VISITOR] \u00A7f" + name.substring(10);
         }
-        String color = "§7";
-        String tag = "OTHER";
 
-        if (CROPS_SET.contains(name)) {
-            color = "§a";
-            tag = "CROP";
-        } else if (PEST_ITEMS_SET.contains(name)) {
-            color = "§d";
-            tag = "PEST";
-        } else if (PETS_SET.contains(name)) {
-            color = "§6";
-            tag = "PET";
-        } else if (MISC_DROPS_SET.contains(name) || name.toLowerCase().startsWith("pet xp (")) {
-            color = "§b";
-            tag = "MISC";
+        String color = "\u00A77";
+        String tag = "OTHER";
+        if (ItemConstants.CROPS.contains(name)) {
+            color = "\u00A7a"; tag = "CROP";
+        } else if (ItemConstants.PEST_ITEMS.contains(name)) {
+            color = "\u00A7d"; tag = "PEST";
+        } else if (ItemConstants.PETS.contains(name)) {
+            color = "\u00A76"; tag = "PET";
+        } else if (ItemConstants.MISC_DROPS.contains(name) || name.toLowerCase().startsWith("pet xp (")) {
+            color = "\u00A7b"; tag = "MISC";
         }
 
         String displayName = name.replace("Enchanted ", "Ench. ");
         if (name.toLowerCase().startsWith("pet xp (")) {
             displayName = name.substring(8, name.length() - 1) + " XP";
         }
-        return color + "§l[" + tag + "] §f" + displayName;
+        return color + "\u00A7l[" + tag + "] \u00A7f" + displayName;
     }
 
     public static String getCompactCategoryLabel(String category) {
         switch (category) {
-            case "Crops":
-                return "§a§l[CROP]";
-            case "Pest Items":
-                return "§d§l[PEST]";
-            case "Pets":
-                return "§6§l[PET]";
-            case "Misc Drops":
-                return "§b§l[MISC]";
-            case "Visitor":
-                return "§5§l[VISITOR]";
-            case "Costs":
-                return "§c§l[COST]";
-            default:
-                return "§7§l[OTHER]";
+            case "Crops": return "\u00A7a\u00A7l[CROP]";
+            case "Pest Items": return "\u00A7d\u00A7l[PEST]";
+            case "Pets": return "\u00A76\u00A7l[PET]";
+            case "Misc Drops": return "\u00A7b\u00A7l[MISC]";
+            case "Visitor": return "\u00A75\u00A7l[VISITOR]";
+            case "Costs": return "\u00A7c\u00A7l[COST]";
+            default: return "\u00A77\u00A7l[OTHER]";
         }
     }
 
-    private static String normalizeName(String name) {
-        if (name == null || name.isEmpty())
-            return "Unknown Item";
+    public static Map<String, Long> getActiveDrops() { return getActiveDrops("session"); }
+    public static Map<String, Long> getActiveDrops(boolean lifetime) { return getActiveDrops(lifetime ? "lifetime" : "session"); }
 
+    public static Map<String, Long> getActiveDrops(String mode) {
+        Map<String, Long> counts = ProfitState.getInstance().getCounts(mode);
+        return counts.entrySet().stream()
+                .filter(e -> !ItemConstants.isIgnoredItem(e.getKey()))
+                .sorted((e1, e2) -> {
+                    double p1 = BazaarFetcher.getInstance().getItemPrice(e1.getKey()) * e1.getValue();
+                    double p2 = BazaarFetcher.getInstance().getItemPrice(e2.getKey()) * e2.getValue();
+                    return Double.compare(p2, p1);
+                })
+                .collect(java.util.stream.Collectors.toMap(
+                        Map.Entry::getKey, Map.Entry::getValue,
+                        (v1, v2) -> v1, LinkedHashMap::new));
+    }
+
+    public static Map<String, Long> getCompactDrops() { return getCompactDrops("session"); }
+    public static Map<String, Long> getCompactDrops(boolean lifetime) { return getCompactDrops(lifetime ? "lifetime" : "session"); }
+
+    public static Map<String, Long> getCompactDrops(String mode) {
+        Map<String, Long> compact = new LinkedHashMap<>();
+        compact.put("Crops", 0L);
+        compact.put("Pest Items", 0L);
+        compact.put("Pets", 0L);
+        compact.put("Misc Drops", 0L);
+        compact.put("Visitor", 0L);
+        compact.put("Costs", 0L);
+        compact.put("Others", 0L);
+
+        Map<String, Long> targetCounts = ProfitState.getInstance().getCounts(mode);
+
+        for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
+            String name = entry.getKey();
+            if (ItemConstants.isIgnoredItem(name)) continue;
+            long count = entry.getValue();
+            double price = BazaarFetcher.getInstance().getItemPrice(name);
+            double profit = price * count;
+
+            String category = ItemConstants.getCategory(name);
+            if ("Costs".equals(category) || (profit < 0 && "Others".equals(category))) {
+                compact.merge("Costs", (long) profit, Long::sum);
+            } else {
+                compact.merge(category, (long) profit, Long::sum);
+            }
+        }
+
+        return compact.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .collect(java.util.stream.Collectors.toMap(
+                        Map.Entry::getKey, Map.Entry::getValue,
+                        (v1, v2) -> v1, LinkedHashMap::new));
+    }
+
+    public static void reset() { resetSession(); }
+
+    public static void resetDaily() { ProfitStorage.getInstance().resetDaily(); }
+
+    public static void resetLifetime() {
+        ProfitState.getInstance().resetLifetime();
+        ProfitStorage.getInstance().saveLifetime();
+    }
+
+    public static long getTotalProfit() { return getTotalProfit("session"); }
+    public static long getTotalProfit(boolean lifetime) { return getTotalProfit(lifetime ? "lifetime" : "session"); }
+
+    public static long getTotalProfit(String mode) {
+        double total = 0;
+        Map<String, Long> targetCounts = ProfitState.getInstance().getCounts(mode);
+        for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
+            if (ItemConstants.isIgnoredItem(entry.getKey())) continue;
+            double price = BazaarFetcher.getInstance().getItemPrice(entry.getKey());
+            total += price * entry.getValue();
+        }
+        return (long) total;
+    }
+
+    // ── Tick-based update ───────────────────────────────────────────────
+
+    public static void update(Minecraft client) {
+        if (client.player == null) return;
+
+        // Flush dirty state to disk
+        ProfitStorage.getInstance().flushIfNeeded();
+
+        // Track purse changes
+        long currentPurse = ClientUtils.getPurse(client);
+        if (currentPurse != -1) {
+            if (INSTANCE.lastPurseBalance != -1) {
+                if (currentPurse > INSTANCE.lastPurseBalance) {
+                    long delta = currentPurse - INSTANCE.lastPurseBalance;
+                    if (delta <= 50000) {
+                        INSTANCE.addDrop("Purse", delta);
+                    } else if (GardenProfitConfig.showDebug) {
+                        ClientUtils.sendDebugMessage(client, "Dismissed large purse change: +" + delta);
+                    }
+                }
+            }
+            INSTANCE.lastPurseBalance = currentPurse;
+        }
+
+        // Track Pet XP from tab list
+        PetXpTracker.update(client);
+
+        // Refresh bazaar prices every hour
+        BazaarFetcher.getInstance().refreshIfNeeded();
+    }
+
+    public static void startStartupPriceFetch() {
+        BazaarFetcher.getInstance().startStartupFetch();
+    }
+
+    public static synchronized void fetchBazaarPrices() {
+        BazaarFetcher.getInstance().fetchBazaarPrices();
+    }
+
+    public static void printPetXpPriceDebug(Minecraft client) {
+        BazaarFetcher.getInstance().printPetXpPriceDebug(client);
+    }
+
+    public static String fetchIdByName(String name) {
+        return BazaarFetcher.getInstance().fetchIdByName(name);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static String normalizeName(String name) {
+        if (name == null || name.isEmpty()) return "Unknown Item";
         StringBuilder b = new StringBuilder();
         boolean nextUpper = true;
         for (char c : name.toCharArray()) {
@@ -673,641 +365,5 @@ public class ProfitManager {
             }
         }
         return b.toString();
-    }
-
-    public static Map<String, Long> getActiveDrops() {
-        return getActiveDrops("session");
-    }
-
-    public static Map<String, Long> getActiveDrops(boolean lifetime) {
-        return getActiveDrops(lifetime ? "lifetime" : "session");
-    }
-
-    public static Map<String, Long> getActiveDrops(String mode) {
-        Map<String, Long> counts;
-        if ("daily".equals(mode)) {
-            counts = dailyCounts;
-        } else if ("lifetime".equals(mode)) {
-            counts = lifetimeCounts;
-        } else {
-            counts = sessionCounts;
-        }
-
-        // Sort by total profit (count * price) descending, filtering out rune/vinyl
-        return counts.entrySet().stream()
-                .filter(e -> !isIgnoredItem(e.getKey()))
-                .sorted((e1, e2) -> {
-                    double p1 = getItemPrice(e1.getKey()) * e1.getValue();
-                    double p2 = getItemPrice(e2.getKey()) * e2.getValue();
-                    return Double.compare(p2, p1);
-                })
-                .collect(java.util.stream.Collectors.toMap(
-                        Map.Entry::getKey,
-                        Map.Entry::getValue,
-                        (v1, v2) -> v1,
-                        LinkedHashMap::new));
-    }
-
-    /**
-     * Returns true if this item should be hidden from rendering (runes, vinyl).
-     */
-    private static boolean isIgnoredItem(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.contains("rune") || lower.endsWith("vinyl") || lower.equals("vinyl");
-    }
-
-    public static Map<String, Long> getCompactDrops() {
-        return getCompactDrops("session");
-    }
-
-    public static Map<String, Long> getCompactDrops(boolean lifetime) {
-        return getCompactDrops(lifetime ? "lifetime" : "session");
-    }
-
-    public static Map<String, Long> getCompactDrops(String mode) {
-        Map<String, Long> compact = new LinkedHashMap<>();
-        compact.put("Crops", 0L);
-        compact.put("Pest Items", 0L);
-        compact.put("Pets", 0L);
-        compact.put("Misc Drops", 0L);
-        compact.put("Visitor", 0L);
-        compact.put("Costs", 0L);
-        compact.put("Others", 0L);
-
-        Map<String, Long> targetCounts;
-        if ("daily".equals(mode)) {
-            targetCounts = dailyCounts;
-        } else if ("lifetime".equals(mode)) {
-            targetCounts = lifetimeCounts;
-        } else {
-            targetCounts = sessionCounts;
-        }
-
-        for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
-            String name = entry.getKey();
-            if (isIgnoredItem(name)) continue;
-            long count = entry.getValue();
-            double price = getItemPrice(name);
-            double profit = price * count;
-
-            if (CROPS_SET.contains(name)) {
-                compact.put("Crops", compact.get("Crops") + (long) profit);
-            } else if (PEST_ITEMS_SET.contains(name)) {
-                compact.put("Pest Items", compact.get("Pest Items") + (long) profit);
-            } else if (PETS_SET.contains(name)) {
-                compact.put("Pets", compact.get("Pets") + (long) profit);
-            } else if (MISC_DROPS_SET.contains(name) || name.toLowerCase().startsWith("pet xp (")) {
-                compact.put("Misc Drops", compact.get("Misc Drops") + (long) profit);
-            } else if (name.equals("[Visitor] Visitor Cost") || name.equals("[Spray] Sprayonator")) {
-                compact.put("Costs", compact.get("Costs") + (long) profit);
-            } else if (name.startsWith("[Visitor] ")) {
-                compact.put("Visitor", compact.get("Visitor") + (long) profit);
-            } else if (profit < 0) {
-                compact.put("Costs", compact.get("Costs") + (long) profit);
-            } else {
-                compact.put("Others", compact.get("Others") + (long) profit);
-            }
-        }
-
-        // Sort compact map by value descending
-        return compact.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .collect(java.util.stream.Collectors.toMap(
-                        Map.Entry::getKey,
-                        Map.Entry::getValue,
-                        (v1, v2) -> v1,
-                        LinkedHashMap::new));
-    }
-
-    public static void reset() {
-        sessionCounts.clear();
-        spraySessionQuantity = 0;
-        PetXpTracker.reset();
-        lastBazaarSprayBuyTime = 0;
-        lastPurseBalance = -1;
-    }
-
-    public static void resetDaily() {
-        dailyCounts.clear();
-        sprayDailyQuantity = 0;
-        lastDailyResetDate = getCurrentDateString();
-        saveDaily();
-    }
-
-    public static void resetLifetime() {
-        lifetimeCounts.clear();
-        saveLifetime();
-    }
-
-    public static long getTotalProfit() {
-        return getTotalProfit("session");
-    }
-
-    public static long getTotalProfit(boolean lifetime) {
-        return getTotalProfit(lifetime ? "lifetime" : "session");
-    }
-
-    public static long getTotalProfit(String mode) {
-        double total = 0;
-        Map<String, Long> targetCounts;
-        if ("daily".equals(mode)) {
-            targetCounts = dailyCounts;
-        } else if ("lifetime".equals(mode)) {
-            targetCounts = lifetimeCounts;
-        } else {
-            targetCounts = sessionCounts;
-        }
-
-        for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
-            if (isIgnoredItem(entry.getKey())) continue;
-            double price = getItemPrice(entry.getKey());
-            total += price * entry.getValue();
-        }
-        return (long) total;
-    }
-
-    private static boolean needsSave = false;
-    private static long lastSaveTime = 0;
-
-    private static void saveLifetime() {
-        ensureConfigDir();
-        Map<String, Long> lifetimeCopy = new LinkedHashMap<>(lifetimeCounts);
-        java.util.concurrent.CompletableFuture.runAsync(() -> {
-            try (java.io.FileWriter writer = new java.io.FileWriter(LIFETIME_FILE)) {
-                GSON.toJson(lifetimeCopy, writer);
-            } catch (java.io.IOException e) {
-                e.printStackTrace();
-            }
-        });
-    }
-
-    public static void loadLifetime() {
-        migrateOldFile(OLD_LIFETIME_FILE, LIFETIME_FILE);
-        if (!LIFETIME_FILE.exists())
-            return;
-        try (java.io.FileReader reader = new java.io.FileReader(LIFETIME_FILE)) {
-            java.lang.reflect.Type type = new com.google.gson.reflect.TypeToken<Map<String, Long>>() {
-            }.getType();
-            Map<String, Long> data = GSON.fromJson(reader, type);
-            if (data != null) {
-                lifetimeCounts.clear();
-                lifetimeCounts.putAll(data);
-            }
-        } catch (Exception e) {
-            System.err.println("[GardenProfit] Failed to load lifetime profit data: " + e.getMessage());
-        }
-    }
-
-    private static void saveDaily() {
-        ensureConfigDir();
-        DailyData data = new DailyData();
-        data.counts = new LinkedHashMap<>(dailyCounts);
-        data.sprayQuantity = sprayDailyQuantity;
-        data.resetDate = lastDailyResetDate;
-        java.util.concurrent.CompletableFuture.runAsync(() -> {
-            try (java.io.FileWriter writer = new java.io.FileWriter(DAILY_FILE)) {
-                GSON.toJson(data, writer);
-            } catch (java.io.IOException e) {
-                e.printStackTrace();
-            }
-        });
-    }
-
-    public static void loadDaily() {
-        migrateOldFile(OLD_DAILY_FILE, DAILY_FILE);
-        if (!DAILY_FILE.exists())
-            return;
-        try (java.io.FileReader reader = new java.io.FileReader(DAILY_FILE)) {
-            DailyData data = GSON.fromJson(reader, DailyData.class);
-            if (data != null) {
-                lastDailyResetDate = data.resetDate != null ? data.resetDate : getCurrentDateString();
-                
-                // Check if we need to reset for a new day
-                if (!lastDailyResetDate.equals(getCurrentDateString())) {
-                    resetDaily();
-                } else {
-                    dailyCounts.clear();
-                    if (data.counts != null) {
-                        dailyCounts.putAll(data.counts);
-                    }
-                    sprayDailyQuantity = data.sprayQuantity;
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[GardenProfit] Failed to load daily profit data: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Gets the current date in YYYY-MM-DD format using the system's local timezone.
-     */
-    private static String getCurrentDateString() {
-        java.time.LocalDate today = java.time.LocalDate.now();
-        return today.toString();
-    }
-
-    /**
-     * Checks if a new day has started and resets daily counts if needed.
-     */
-    private static void checkDailyReset() {
-        String currentDate = getCurrentDateString();
-        if (!currentDate.equals(lastDailyResetDate)) {
-            resetDaily();
-        }
-    }
-
-    // ── Bazaar Price Cache ──
-
-    private static void saveBazaarCache() {
-        ensureConfigDir();
-        try (java.io.FileWriter writer = new java.io.FileWriter(BAZAAR_CACHE_FILE)) {
-            BazaarCacheData data = new BazaarCacheData();
-            data.prices = new LinkedHashMap<>(bazaarPrices);
-            data.fetchTimeMs = lastBazaarFetchTime;
-            GSON.toJson(data, writer);
-            System.out.println("[GardenProfit] Bazaar cache saved to " + BAZAAR_CACHE_FILE.getName()
-                    + " (" + data.prices.size() + " prices)");
-        } catch (java.io.IOException e) {
-            System.err.println("[GardenProfit] Failed to save bazaar cache: " + e.getMessage());
-        }
-    }
-
-    public static void loadBazaarCache() {
-        migrateOldFile(OLD_BAZAAR_CACHE_FILE, BAZAAR_CACHE_FILE);
-        if (!BAZAAR_CACHE_FILE.exists()) {
-            System.out.println("[GardenProfit] No bazaar cache file found, will fetch fresh prices.");
-            return;
-        }
-        try (java.io.FileReader reader = new java.io.FileReader(BAZAAR_CACHE_FILE)) {
-            BazaarCacheData data = GSON.fromJson(reader, BazaarCacheData.class);
-            if (data != null && data.prices != null) {
-                bazaarPrices.putAll(data.prices);
-                lastBazaarFetchTime = data.fetchTimeMs;
-                long ageMinutes = (System.currentTimeMillis() - data.fetchTimeMs) / 60_000;
-                System.out.println("[GardenProfit] Loaded " + data.prices.size()
-                        + " cached bazaar prices (age: " + ageMinutes + " min)");
-            }
-        } catch (Exception e) {
-            System.err.println("[GardenProfit] Failed to load bazaar cache: " + e.getMessage());
-        }
-    }
-
-    private static class BazaarCacheData {
-        Map<String, Double> prices;
-        long fetchTimeMs;
-    }
-
-    private static class DailyData {
-        Map<String, Long> counts;
-        long sprayQuantity;
-        String resetDate;
-    }
-
-    public static double getItemPrice(String itemName) {
-        if (itemName.startsWith("[Visitor] ")) {
-            String realName = itemName.substring(10);
-            if ("Visitor Cost".equals(realName))
-                return 1.0;
-            if ("Copper".equals(realName)) {
-                double greenThumbPrice = bazaarPrices.getOrDefault("ENCHANTMENT_GREEN_THUMB_1", 0.0);
-                if (greenThumbPrice <= 0) {
-                    greenThumbPrice = TRACKED_ITEMS.getOrDefault("ENCHANTMENT_GREEN_THUMB_1", 0.0);
-                }
-                if (greenThumbPrice > 0) {
-                    return greenThumbPrice / 1500.0;
-                }
-                return 0.0;
-            }
-            return getItemPrice(realName); // Recursive call for the actual item price
-        }
-
-        // Visitor cost: count IS the coin amount, so price = 1.0
-        if ("[Spray] Sprayonator".equals(itemName) || "Purse".equals(itemName)) {
-            return 1.0;
-        }
-        double price = TRACKED_ITEMS.getOrDefault(itemName, 0.0);
-        if (price == 0.0) {
-            price = bazaarPrices.getOrDefault(itemName, 0.0);
-        }
-        return price;
-    }
-
-    public static boolean isPredefinedTrackedItem(String itemName) {
-        if (itemName == null)
-            return false;
-        if (itemName.toLowerCase().startsWith("pet xp ("))
-            return true;
-        for (String tracked : TRACKED_ITEMS.keySet()) {
-            if (tracked.equalsIgnoreCase(itemName)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static void update(net.minecraft.client.Minecraft client) {
-        if (client.player == null)
-            return;
-
-        if (needsSave && System.currentTimeMillis() - lastSaveTime > 5000) {
-            saveLifetime();
-            saveDaily();
-            needsSave = false;
-            lastSaveTime = System.currentTimeMillis();
-        }
-
-        // 1. Track Purse
-        long currentPurse = ClientUtils.getPurse(client);
-        if (currentPurse != -1) {
-            if (lastPurseBalance != -1) {
-                if (currentPurse > lastPurseBalance) {
-                    long delta = currentPurse - lastPurseBalance;
-                    if (delta <= 50000) {
-                        addDrop("Purse", delta);
-                    } else if (com.gardenprofit.mod.GardenProfitConfig.showDebug) {
-                        ClientUtils.sendDebugMessage(client, "Dismissed large purse change: +" + delta);
-                    }
-                }
-            }
-            lastPurseBalance = currentPurse;
-        }
-
-        // Track Pet XP from tab list
-        PetXpTracker.update(client);
-
-        // Refresh bazaar prices every hour
-        long now = System.currentTimeMillis();
-        if (now - lastBazaarFetchTime > 3600000L) {
-            fetchBazaarPrices();
-        }
-    }
-
-    /**
-     * Sends the current Rose Dragon BIN price data to the player's chat.
-     * Call this when the macro starts so you can verify the fetched prices.
-     */
-    public static void printPetXpPriceDebug(net.minecraft.client.Minecraft client) {
-        if (client.player == null)
-            return;
-
-        client.player.displayClientMessage(
-                net.minecraft.network.chat.Component.literal("§b[Pet XP Tracker] §fCurrently tracking:"), false);
-
-        for (String petConfig : GardenProfitConfig.petTrackerList) {
-            GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
-            long lvl1 = petLvl1Prices.getOrDefault(info.name, 0L);
-            long lvlMax = petMaxLvlPrices.getOrDefault(info.name, 0L);
-            double pricePerXp = bazaarPrices.getOrDefault("Pet XP (" + info.name + ")", 0.0);
-
-            String lvl1Str = lvl1 > 0 ? String.format("%,d", lvl1) : "not found";
-            String lvlMaxStr = lvlMax > 0 ? String.format("%,d", lvlMax) : "not found";
-            String marginStr = pricePerXp > 0 ? String.format("%.3f", pricePerXp) : "not fetched";
-
-            client.player.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
-                            " §8> §e" + info.name + "§f: §7L1: §6" + lvl1Str + " §7Max: §6" + lvlMaxStr + " §7-> §a"
-                                    + marginStr + " §7C/XP"),
-                    false);
-        }
-    }
-
-    /**
-     * Called by {@link PetXpTracker} to record XP gained this tick.
-     * Uses the same session/lifetime accounting as other drops.
-     */
-    public static void addPetXp(String petName, long xpAmount) {
-        if (xpAmount <= 0)
-            return;
-        addDrop("Pet XP (" + petName + ")", xpAmount);
-    }
-
-    private static int startupPetPriceRetryCount = 3;
-
-    public static void startStartupPriceFetch() {
-        // Load cached prices first for instant availability
-        loadBazaarCache();
-        startupPetPriceRetryCount = 0;
-        fetchBazaarPrices();
-    }
-
-    public static synchronized void fetchBazaarPrices() {
-        lastBazaarFetchTime = System.currentTimeMillis();
-        new Thread(() -> {
-            System.out.println("[GardenProfit] Starting bazaar price fetch...");
-            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
-            performFetchInternal(client);
-
-            // Save cache after successful fetch
-            saveBazaarCache();
-            System.out.println("[GardenProfit] Bazaar price fetch complete. " + bazaarPrices.size() + " prices loaded.");
-
-            // Startup retry logic: if any pet price is missing, retry up to 3 times every 5
-            // seconds
-            if (startupPetPriceRetryCount < 3) {
-                boolean missingAny = false;
-                for (String petConfig : GardenProfitConfig.petTrackerList) {
-                    GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
-                    if (!bazaarPrices.containsKey("Pet XP (" + info.name + ")")) {
-                        missingAny = true;
-                        break;
-                    }
-                }
-
-                if (missingAny) {
-                    startupPetPriceRetryCount++;
-                    System.out.println("[GardenProfit] Pet XP prices not fully fetched, retry " + startupPetPriceRetryCount
-                            + "/3 in 5s...");
-                    try {
-                        Thread.sleep(5000L);
-                    } catch (InterruptedException ignored) {
-                    }
-                    fetchBazaarPrices();
-                } else {
-                    startupPetPriceRetryCount = 3; // Success, don't retry again
-                }
-            }
-        }).start();
-    }
-
-    private static void performFetchInternal(java.net.http.HttpClient client) {
-        int fetched = 0;
-        int failed = 0;
-        for (Map.Entry<String, String> entry : BAZAAR_MAPPING.entrySet()) {
-            String itemName = entry.getKey();
-            String itemTag = entry.getValue();
-
-            try {
-                java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create("https://sky.coflnet.com/api/item/price/" + itemTag + "/current"))
-                        .GET()
-                        .build();
-
-                java.net.http.HttpResponse<String> response = client.send(request,
-                        java.net.http.HttpResponse.BodyHandlers.ofString());
-                if (response.statusCode() == 200) {
-                    BazaarApiResponse data = GSON.fromJson(response.body(), BazaarApiResponse.class);
-                    if (data != null) {
-                        double price = GardenProfitConfig.useBazaarSellPrice ? data.sell : data.buy;
-                        if (price > 0) {
-                            bazaarPrices.put(itemName, price);
-                            fetched++;
-                            String priceType = GardenProfitConfig.useBazaarSellPrice ? "sell" : "buy";
-                            System.out.println("[GardenProfit] Price (" + priceType + "): " + itemName + " = " + String.format("%.1f", price));
-                        }
-                    }
-                } else {
-                    failed++;
-                    System.err.println("[GardenProfit] HTTP " + response.statusCode() + " for " + itemName);
-                }
-            } catch (Exception e) {
-                failed++;
-                System.err.println("[GardenProfit] Failed to fetch price for " + itemName + ": " + e.getMessage());
-            }
-        }
-        System.out.println("[GardenProfit] Bazaar items: " + fetched + " fetched, " + failed + " failed.");
-        // Also fetch Pet XP price
-        fetchPetXpPrice(client);
-    }
-
-    /**
-     * Fetches the lowest BIN for level-1 and level-max for all configured pets,
-     * deriving the coin value of a single XP point for each.
-     */
-    private static void fetchPetXpPrice(java.net.http.HttpClient http) {
-        for (String petConfig : GardenProfitConfig.petTrackerList) {
-            GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
-            long[] table = PetXpTracker.getXpTable(info.rarity, info.maxLevel);
-            final long TOTAL_XP = table[info.maxLevel];
-
-            try {
-                // ── Level 1 ─────────────────────────────────────────────────────
-                long lvl1Price = 0;
-                String url1 = "https://sky.coflnet.com/api/auctions/tag/" + info.tag
-                        + "/active/overview?query%5BRarity%5D=" + info.rarity.name();
-
-                java.net.http.HttpRequest req1 = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(url1))
-                        .GET().build();
-                java.net.http.HttpResponse<String> resp1 = http.send(req1,
-                        java.net.http.HttpResponse.BodyHandlers.ofString());
-
-                if (resp1.statusCode() == 200) {
-                    java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<OverviewEntry>>() {
-                    }.getType();
-                    java.util.List<OverviewEntry> listings = GSON.fromJson(resp1.body(), listType);
-                    if (listings != null) {
-                        for (OverviewEntry entry : listings) {
-                            if (entry.price > 0 && (lvl1Price == 0 || entry.price < lvl1Price)) {
-                                lvl1Price = entry.price;
-                            }
-                        }
-                    }
-                }
-
-                // ── Max Level ────────────────────────────────────────────────────
-                long lvlMaxPrice = 0;
-                String urlMax = "https://sky.coflnet.com/api/auctions/tag/" + info.tag
-                        + "/active/overview?query%5BRarity%5D=" + info.rarity.name()
-                        + "&query%5BPetLevel%5D=" + info.maxLevel;
-
-                java.net.http.HttpRequest reqMax = java.net.http.HttpRequest.newBuilder()
-                        .uri(java.net.URI.create(urlMax))
-                        .GET().build();
-                java.net.http.HttpResponse<String> respMax = http.send(reqMax,
-                        java.net.http.HttpResponse.BodyHandlers.ofString());
-
-                if (respMax.statusCode() == 200) {
-                    java.lang.reflect.Type listType = new com.google.gson.reflect.TypeToken<java.util.List<OverviewEntry>>() {
-                    }.getType();
-                    java.util.List<OverviewEntry> listings = GSON.fromJson(respMax.body(), listType);
-                    if (listings != null) {
-                        for (OverviewEntry entry : listings) {
-                            if (entry.price > 0 && (lvlMaxPrice == 0 || entry.price < lvlMaxPrice)) {
-                                lvlMaxPrice = entry.price;
-                            }
-                        }
-                    }
-                }
-
-                if (lvl1Price > 0)
-                    petLvl1Prices.put(info.name, lvl1Price);
-                if (lvlMaxPrice > 0)
-                    petMaxLvlPrices.put(info.name, lvlMaxPrice);
-
-                if (lvlMaxPrice > lvl1Price && lvl1Price > 0) {
-                    double pricePerXp = (double) (lvlMaxPrice - lvl1Price) / TOTAL_XP;
-                    if (pricePerXp > 0) {
-                        bazaarPrices.put("Pet XP (" + info.name + ")", pricePerXp);
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("[GardenProfit] Failed to fetch Pet XP price for " + info.name + ": " + e.getMessage());
-            }
-        }
-    }
-
-    // ── Cofl API Item ID Cache ──
-    private static final java.util.Map<String, String> idByNameCache = new java.util.concurrent.ConcurrentHashMap<>();
-
-    public static String fetchIdByName(String name) {
-        if (name == null || name.isEmpty())
-            return null;
-        if (idByNameCache.containsKey(name)) {
-            String cached = idByNameCache.get(name);
-            return cached.isEmpty() ? null : cached;
-        }
-
-        try {
-            String encoded = java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8);
-            java.net.http.HttpClient http = java.net.http.HttpClient.newBuilder()
-                    .connectTimeout(java.time.Duration.ofSeconds(3)).build();
-            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("https://sky.coflnet.com/api/items/search/" + encoded + "?limit=1"))
-                    .GET().build();
-            java.net.http.HttpResponse<String> resp = http.send(req,
-                    java.net.http.HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) {
-                String body = resp.body();
-                com.google.gson.JsonArray arr = com.google.gson.JsonParser.parseString(body).getAsJsonArray();
-                if (arr.size() > 0) {
-                    String tag = arr.get(0).getAsJsonObject().get("tag").getAsString();
-                    idByNameCache.put(name, tag);
-                    return tag;
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("[GardenProfit] Cofl item ID lookup failed for '" + name + "': " + e.getMessage());
-        }
-        idByNameCache.put(name, "");
-        return null;
-    }
-
-    private static class BazaarApiResponse {
-        double sell;
-        double buy;
-    }
-
-    /** One entry from /api/auctions/tag/{tag}/active/overview */
-    private static class OverviewEntry {
-        long price;
-        String uuid;
-    }
-
-    /** Ensure the config/gardenprofit/ directory exists. */
-    private static void ensureConfigDir() {
-        if (!CONFIG_DIR.exists()) {
-            CONFIG_DIR.mkdirs();
-        }
-    }
-
-    /** Migrate an old config file to the new location if it exists. */
-    private static void migrateOldFile(java.io.File oldFile, java.io.File newFile) {
-        if (!newFile.exists() && oldFile.exists()) {
-            ensureConfigDir();
-            if (oldFile.renameTo(newFile)) {
-                System.out.println("[GardenProfit] Migrated " + oldFile.getName() + " -> " + newFile.getPath());
-            }
-        }
     }
 }

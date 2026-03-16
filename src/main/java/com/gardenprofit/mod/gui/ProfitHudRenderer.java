@@ -313,7 +313,7 @@ public class ProfitHudRenderer {
             for (Map.Entry<String, Long> entry : drops.entrySet()) {
                 String itemName = entry.getKey();
                 long count = entry.getValue();
-                double price = ProfitManager.getItemPrice(itemName);
+                double price = ProfitManager.getInstance().getItemPrice(itemName);
                 long lineProfit = (long) (price * count);
 
                 String categorizedName = ProfitManager.getCategorizedName(itemName);

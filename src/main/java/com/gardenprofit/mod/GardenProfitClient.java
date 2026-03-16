@@ -1,6 +1,8 @@
 package com.gardenprofit.mod;
 
 import com.gardenprofit.mod.gui.ProfitHudRenderer;
+import com.gardenprofit.mod.modules.ChatMessageParser;
+import com.gardenprofit.mod.modules.EventDispatcher;
 import com.gardenprofit.mod.modules.InventoryTracker;
 import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.PetXpTracker;
@@ -27,6 +29,13 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitManager.loadLifetime();
         ProfitManager.loadDaily();
 
+        // Register prioritized event handlers via EventDispatcher
+        // T0 = SackTracker, T1 = ChatMessageParser, T2 = InventoryTracker
+        EventDispatcher dispatcher = EventDispatcher.getInstance();
+        dispatcher.register(SackTracker.getInstance());
+        dispatcher.register(ChatMessageParser.getInstance());
+        dispatcher.register(InventoryTracker.getInstance());
+
         // Cache inventory/purse on world join
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             InventoryTracker.onWorldSwitch();
@@ -35,8 +44,8 @@ public class GardenProfitClient implements ClientModInitializer {
         });
 
         // Register /gardenprofit command to open the HUD edit screen
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
-            dispatcher.register(ClientCommandManager.literal("gardenprofit")
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher2, buildContext) -> {
+            dispatcher2.register(ClientCommandManager.literal("gardenprofit")
                 .executes(context -> {
                     openConfigScreenNextTick = true;
                     return 1;
@@ -82,15 +91,13 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitHudRenderer.register();
         ProfitHudRenderer.startSession();
 
-        // Register chat message listener for profit tracking + sack tracking
+        // Register chat message listener -- dispatch through EventDispatcher
         ClientReceiveMessageEvents.GAME.register((message, isOverlay) -> {
             if (isOverlay) return;
             // Only track drops/sacks while in the Garden
             if (!LocationTracker.isInGarden()) return;
-            // Try sack tracking first (precise crop data from hover text)
-            SackTracker.handleChatMessage(message);
-            // Then handle other chat-based tracking (pest drops, rare drops, etc.)
-            ProfitManager.handleChatMessage(message);
+            // Dispatch to T0 (SackTracker) -> T1 (ChatMessageParser) -> T2 (InventoryTracker)
+            EventDispatcher.getInstance().dispatchChatMessage(message);
         });
 
         // Register tick event for profit updates and inventory tracking
@@ -113,8 +120,8 @@ public class GardenProfitClient implements ClientModInitializer {
             // Only run tracking modules while in the Garden
             if (!LocationTracker.isInGarden()) return;
 
-            // Inventory diff tracking every tick for non-sack items
-            InventoryTracker.tick(client);
+            // Dispatch tick events through EventDispatcher (InventoryTracker runs at T2)
+            EventDispatcher.getInstance().dispatchTick(client);
 
             // Update profit (purse tracking) every 5 ticks
             if (tickCounter % 5 == 0) {
