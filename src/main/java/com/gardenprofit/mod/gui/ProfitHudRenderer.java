@@ -317,17 +317,19 @@ public class ProfitHudRenderer {
                 long lineProfit = (long) (price * count);
 
                 String categorizedName = ProfitManager.getCategorizedName(itemName);
-                // Pet XP: show XP total rather than an item count
                 String countDisplay;
                 if (itemName.equals("[Spray] Sprayonator")) {
                     long sprayQty = ProfitManager.getSprayQuantity(mode);
                     countDisplay = "x" + String.format("%,d", sprayQty);
+                } else if (itemName.equals("[Visitor] Visitor Cost")) {
+                    long costCount = com.gardenprofit.mod.modules.ProfitState.getInstance().getCounts(mode).getOrDefault("[Visitor] Visitor Cost Count", 0L);
+                    countDisplay = costCount > 0 ? "x" + String.format("%,d", costCount) : "";
                 } else if (itemName.startsWith("Pet XP (")) {
                     countDisplay = String.format("%,d XP", count);
                 } else {
                     countDisplay = "x" + String.format("%,d", count);
                 }
-                String labelText = categorizedName + " §r(" + countDisplay + ")";
+                String labelText = categorizedName + (countDisplay.isEmpty() ? "" : " §r(" + countDisplay + ")");
                 String valueText = formatProfit(lineProfit);
 
                 int color;

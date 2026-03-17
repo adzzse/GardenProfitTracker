@@ -136,6 +136,9 @@ public class LocationTracker {
      * Reset state on world switch.
      */
     public static void onWorldSwitch() {
+        if (inGarden && gardenEnteredTime > 0) {
+            accumulatedGardenMs += System.currentTimeMillis() - gardenEnteredTime;
+        }
         currentArea = "";
         inGarden = false;
         gardenEnteredTime = 0;

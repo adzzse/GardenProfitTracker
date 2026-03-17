@@ -201,6 +201,8 @@ public final class ItemConstants {
      */
     public static boolean isIgnoredItem(String name) {
         if (name == null) return false;
+        if (name.equals("[Visitor] Visitors Served")) return true;
+        if (name.equals("[Visitor] Visitor Cost Count")) return true;
         String lower = name.toLowerCase();
         return lower.contains("rune") || lower.endsWith("vinyl") || lower.equals("vinyl");
     }
