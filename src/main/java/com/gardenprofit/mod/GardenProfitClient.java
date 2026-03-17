@@ -45,50 +45,8 @@ public class GardenProfitClient implements ClientModInitializer {
 
         // Register /gardenprofit and /gp commands
         ClientCommandRegistrationCallback.EVENT.register((dispatcher2, buildContext) -> {
-            var commandTree = ClientCommandManager.literal("gardenprofit")
-                .executes(context -> {
-                    openConfigScreenNextTick = true;
-                    return 1;
-                })
-                .then(ClientCommandManager.literal("reset")
-                    .executes(context -> {
-                        ProfitManager.resetSession();
-                        ProfitHudRenderer.startSession();
-                        LocationTracker.resetUptime();
-                        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
-                        return 1;
-                    })
-                )
-                .then(ClientCommandManager.literal("toggle")
-                    .executes(context -> {
-                        GardenProfitConfig.hudHidden = !GardenProfitConfig.hudHidden;
-                        GardenProfitConfig.save();
-                        String status = GardenProfitConfig.hudHidden ? "\u00A7cHidden" : "\u00A7aVisible";
-                        if (Minecraft.getInstance().player != null) {
-                            Minecraft.getInstance().player.displayClientMessage(
-                                net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD: " + status), false);
-                        }
-                        return 1;
-                    })
-                )
-                .then(ClientCommandManager.literal("pricemode")
-                    .executes(context -> {
-                        GardenProfitConfig.useBazaarSellPrice = !GardenProfitConfig.useBazaarSellPrice;
-                        GardenProfitConfig.save();
-                        String mode = GardenProfitConfig.useBazaarSellPrice ? "Insta-Sell" : "Insta-Buy";
-                        if (Minecraft.getInstance().player != null) {
-                            Minecraft.getInstance().player.displayClientMessage(
-                                net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] Bazaar price mode: \u00A7e" + mode + "\u00A7a. Re-fetching prices..."), false);
-                        }
-                        ProfitManager.fetchBazaarPrices();
-                        return 1;
-                    })
-                );
-
-            dispatcher2.register(commandTree);
-            
-            // Register short alias 'gp'
-            dispatcher2.register(ClientCommandManager.literal("gp").redirect(commandTree.build()));
+            dispatcher2.register(buildCommandTree("gardenprofit"));
+            dispatcher2.register(buildCommandTree("gp"));
         });
 
         // Register HUD renderer
@@ -136,5 +94,57 @@ public class GardenProfitClient implements ClientModInitializer {
                 PetXpTracker.update(client);
             }
         });
+    }
+
+    private com.mojang.brigadier.builder.LiteralArgumentBuilder<net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource> buildCommandTree(String name) {
+        return ClientCommandManager.literal(name)
+            .executes(context -> {
+                openConfigScreenNextTick = true;
+                return 1;
+            })
+            .then(ClientCommandManager.literal("reset")
+                .executes(context -> {
+                    ProfitManager.resetSession();
+                    ProfitHudRenderer.startSession();
+                    LocationTracker.resetUptime();
+                    com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
+                    return 1;
+                })
+            )
+            .then(ClientCommandManager.literal("toggle")
+                .executes(context -> {
+                    GardenProfitConfig.hudHidden = !GardenProfitConfig.hudHidden;
+                    GardenProfitConfig.save();
+                    String status = GardenProfitConfig.hudHidden ? "\u00A7cHidden" : "\u00A7aVisible";
+                    if (Minecraft.getInstance().player != null) {
+                        Minecraft.getInstance().player.displayClientMessage(
+                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD: " + status), false);
+                    }
+                    return 1;
+                })
+            )
+            .then(ClientCommandManager.literal("pricemode")
+                .executes(context -> {
+                    GardenProfitConfig.useBazaarSellPrice = !GardenProfitConfig.useBazaarSellPrice;
+                    GardenProfitConfig.save();
+                    String mode = GardenProfitConfig.useBazaarSellPrice ? "Insta-Sell" : "Insta-Buy";
+                    if (Minecraft.getInstance().player != null) {
+                        Minecraft.getInstance().player.displayClientMessage(
+                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] Bazaar price mode: \u00A7e" + mode + "\u00A7a. Re-fetching prices..."), false);
+                    }
+                    ProfitManager.fetchBazaarPrices();
+                    return 1;
+                })
+            )
+            .then(ClientCommandManager.literal("fetch")
+                .executes(context -> {
+                    if (Minecraft.getInstance().player != null) {
+                        Minecraft.getInstance().player.displayClientMessage(
+                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] \u00A7eManually fetching prices..."), false);
+                    }
+                    ProfitManager.fetchBazaarPrices();
+                    return 1;
+                })
+            );
     }
 }
