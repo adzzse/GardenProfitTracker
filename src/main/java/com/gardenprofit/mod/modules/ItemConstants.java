@@ -30,12 +30,6 @@ public final class ItemConstants {
             "Moonflower", "Enchanted Moonflower", "Compacted Moonflower",
             "Wild Rose", "Enchanted Wild Rose", "Compacted Wild Rose");
 
-    public static final Set<String> BASE_CROPS = Set.of(
-            "Wheat", "Potato", "Carrot", "Melon Slice", "Pumpkin",
-            "Sugar Cane", "Cactus", "Nether Wart", "Cocoa Beans",
-            "Red Mushroom", "Brown Mushroom",
-            "Sunflower", "Moonflower", "Wild Rose", "Seeds");
-
     public static final Set<String> PEST_ITEMS = Set.of(
             "Beady Eyes", "Chirping Stereo", "Sunder VI Book", "Clipped Wings",
             "Bookworm's Favorite Book", "Atmospheric Filter", "Wriggling Larva",
@@ -51,15 +45,7 @@ public final class ItemConstants {
             "Cropie", "Squash", "Fermento", "Helianthus",
             "Tool EXP Capsule", "Pet XP", "Jacob's Ticket", "Carnival Ticket", "Purse");
 
-    /**
-     * (InventoryTracker was removed -- keeping this empty comment block to preserve lines if needed, or just deleting)
-    
-    public static final Set<String> TRACKED_INVENTORY_ITEMS = Set.of(
-            "Cropie", "Squash", "Fermento",
-            "Tool EXP Capsule");
-    */
     // ── Fallback Prices (NPC / pre-bazaar values) ───────────────────────
-
     public static final Map<String, Double> TRACKED_ITEMS = Map.ofEntries(
             // Crops
             Map.entry("Wheat", 6.0), Map.entry("Enchanted Wheat", 960.0), Map.entry("Enchanted Hay Bale", 153600.0),
@@ -136,18 +122,56 @@ public final class ItemConstants {
     // ── Bazaar API Mapping (item display name -> Coflnet tag) ────────────
 
     public static final Map<String, String> BAZAAR_MAPPING = Map.ofEntries(
+
+            // Crops
+            Map.entry("Wheat", "WHEAT"), Map.entry("Enchanted Wheat", "ENCHANTED_WHEAT"), Map.entry("Enchanted Hay Bale", "ENCHANTED_HAY_BALE"),
+            Map.entry("Seeds", "SEEDS"), Map.entry("Enchanted Seeds", "ENCHANTED_SEEDS"), Map.entry("Box of Seeds", "BOX_OF_SEEDS"),
+            Map.entry("Potato", "POTATO_ITEM"), Map.entry("Enchanted Potato", "ENCHANTED_POTATO"), Map.entry("Enchanted Baked Potato", "ENCHANTED_BAKED_POTATO"),
+            Map.entry("Carrot", "CARROT_ITEM"), Map.entry("Enchanted Carrot", "ENCHANTED_CARROT"), Map.entry("Enchanted Golden Carrot", "ENCHANTED_GOLDEN_CARROT"),
+            Map.entry("Melon Slice", "MELON"), Map.entry("Enchanted Melon Slice", "ENCHANTED_MELON"), Map.entry("Enchanted Melon", "ENCHANTED_MELON_BLOCK"),
+            Map.entry("Pumpkin", "PUMPKIN"), Map.entry("Enchanted Pumpkin", "ENCHANTED_PUMPKIN"), Map.entry("Polished Pumpkin", "POLISHED_PUMPKIN"),
+            Map.entry("Sugar Cane", "SUGAR_CANE"), Map.entry("Enchanted Sugar", "ENCHANTED_SUGAR"), Map.entry("Enchanted Sugar Cane", "ENCHANTED_SUGAR_CANE"),
+            Map.entry("Cactus", "CACTUS"), Map.entry("Enchanted Cactus Green", "ENCHANTED_CACTUS_GREEN"), Map.entry("Enchanted Cactus", "ENCHANTED_CACTUS"),
+            Map.entry("Red Mushroom", "MUSHROOM_RED"), Map.entry("Enchanted Red Mushroom", "ENCHANTED_RED_MUSHROOM"), Map.entry("Enchanted Red Mushroom Block", "ENCHANTED_HUGE_MUSHROOM_2"),
+            Map.entry("Brown Mushroom", "MUSHROOM_COLLECTION"), Map.entry("Enchanted Brown Mushroom", "ENCHANTED_BROWN_MUSHROOM"), Map.entry("Enchanted Brown Mushroom Block", "ENCHANTED_HUGE_MUSHROOM_1"),
+            Map.entry("Cocoa Beans", "INK_SACK"), Map.entry("Enchanted Cocoa Beans", "ENCHANTED_COCOA"), Map.entry("Enchanted Cookie", "ENCHANTED_COOKIE"),
+            Map.entry("Nether Wart", "NETHER_STALK"), Map.entry("Enchanted Nether Wart", "ENCHANTED_NETHER_STALK"), Map.entry("Mutant Nether Wart", "MUTANT_NETHER_STALK"),
+            Map.entry("Sunflower", "DOUBLE_PLANT"), Map.entry("Enchanted Sunflower", "ENCHANTED_SUNFLOWER"), Map.entry("Compacted Sunflower", "COMPACTED_SUNFLOWER"),
+            Map.entry("Moonflower", "MOONFLOWER"), Map.entry("Enchanted Moonflower", "ENCHANTED_MOONFLOWER"), Map.entry("Compacted Moonflower", "COMPACTED_MOONFLOWER"),
+            Map.entry("Wild Rose", "WILD_ROSE"), Map.entry("Enchanted Wild Rose", "ENCHANTED_WILD_ROSE"), Map.entry("Compacted Wild Rose", "COMPACTED_WILD_ROSE"),
+
+            // Pest Items
+            Map.entry("Beady Eyes", "BEADY_EYES"),
+            Map.entry("Chirping Stereo", "CHIRPING_STEREO"),
             Map.entry("Sunder VI Book", "ENCHANTMENT_SUNDER_6"),
+            Map.entry("Clipped Wings", "CLIPPED_WINGS"),
+            Map.entry("Bookworm's Favorite Book", "BOOKWORM_BOOK"),
+            Map.entry("Atmospheric Filter", "ATMOSPHERIC_FILTER"),
+            Map.entry("Wriggling Larva", "WRIGGLING_LARVA"),
             Map.entry("Pesterminator I Book", "ENCHANTMENT_PESTERMINATOR_1"),
+            Map.entry("Squeaky Toy", "SQUEAKY_TOY"),
+            Map.entry("Squeaky Mousemat", "SQUEAKY_MOUSEMAT"),
+            Map.entry("Fire in a Bottle", "FIRE_IN_A_BOTTLE"),
+            Map.entry("Vermin Vaporizer Chip", "VERMIN_VAPORIZER_GARDEN_CHIP"),
+            Map.entry("Mantid Claw", "MANTID_CLAW"),
+            Map.entry("Overclocker 3000", "OVERCLOCKER_3000"),
             Map.entry("Dung", "DUNG"),
             Map.entry("Honey Jar", "HONEY_JAR"),
             Map.entry("Plant Matter", "PLANT_MATTER"),
             Map.entry("Tasty Cheese", "CHEESE_FUEL"),
             Map.entry("Compost", "COMPOST"),
             Map.entry("Jelly", "JELLY"),
-            Map.entry("Helianthus", "HELIANTHUS"),
-            Map.entry("Vermin Vaporizer Chip", "VERMIN_VAPORIZER_GARDEN_CHIP"),
-            Map.entry("ENCHANTMENT_GREEN_THUMB_1", "ENCHANTMENT_GREEN_THUMB_1"),
             Map.entry("Pest Shard", "SHARD_PEST"),
+
+            //Misc
+            Map.entry("Cropie", "CROPIE"),
+            Map.entry("Squash", "SQUASH"),
+            Map.entry("Fermento", "FERMENTO"),
+            Map.entry("Helianthus", "HELIANTHUS"),
+
+            Map.entry("Tool Exp Capsule", "TOOL_EXP_CAPSULE"),
+            Map.entry("Green Thumb 1 Enchant", "ENCHANTMENT_GREEN_THUMB_1"),
+
             // Visitor / Rare Drops Mappings
             Map.entry("Overgrown Grass", "OVERGROWN_GRASS"),
             Map.entry("Flowering Bouqet", "FLOWERING_BOUQUET"),
@@ -182,6 +206,7 @@ public final class ItemConstants {
             Map.entry("Pet Cake", "PET_CAKE"),
             Map.entry("Fine Flour", "FINE_FLOUR"),
             Map.entry("Arachne Fragment", "ARACHNE_FRAGMENT"),
+
             // AH Items Mappings
             Map.entry("Biofuel", "BIOFUEL"),
             Map.entry("Farming Exp Boost", "PET_ITEM_FARMING_SKILL_BOOST_UNCOMMON"),
@@ -231,7 +256,7 @@ public final class ItemConstants {
         if (CROPS.contains(name)) return "Crops";
         if (PEST_ITEMS.contains(name)) return "Pest Items";
         if (PETS.contains(name)) return "Pets";
-        if (MISC_DROPS.contains(name) || name.toLowerCase().startsWith("pet xp (")) return "Misc Drops";
+        if (MISC_DROPS.contains(name) || name.toLowerCase().startsWith("pet xp (")) return "Misc";
         return "Others";
     }
 }

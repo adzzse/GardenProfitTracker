@@ -223,15 +223,33 @@ public final class BazaarFetcher {
                             String priceType = GardenProfitConfig.useBazaarSellPrice ? "sell" : "buy";
                             System.out.println("[GardenProfit] Price (" + priceType + "): "
                                     + itemName + " = " + String.format("%.1f", price));
+                            if (GardenProfitConfig.showDebug) {
+                                com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
+                                    net.minecraft.client.Minecraft.getInstance(),
+                                    "\u00A78[\u00A7eFetch\u00A78] \u00A77" + itemName + " \u00A7f= \u00A7a" + String.format("%.1f", price)
+                                );
+                            }
                         }
                     }
                 } else {
                     failed++;
-                    System.err.println("[GardenProfit] HTTP " + response.statusCode() + " for " + itemName);
+                    System.err.println("[GardenProfit] HTTP " + response.statusCode() + " for " + itemName + " (tag: " + itemTag + ")");
+                    if (GardenProfitConfig.showDebug) {
+                        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
+                            net.minecraft.client.Minecraft.getInstance(),
+                            "\u00A7cHTTP " + response.statusCode() + " for: " + itemName + " (" + itemTag + ")"
+                        );
+                    }
                 }
             } catch (Exception e) {
                 failed++;
                 System.err.println("[GardenProfit] Failed to fetch price for " + itemName + ": " + e.getMessage());
+                if (GardenProfitConfig.showDebug) {
+                    com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
+                        net.minecraft.client.Minecraft.getInstance(),
+                        "\u00A7cFailed to fetch: " + itemName
+                    );
+                }
             }
         }
         System.out.println("[GardenProfit] Bazaar items: " + fetched + " fetched, " + failed + " failed.");
@@ -293,11 +311,23 @@ public final class BazaarFetcher {
                     double pricePerXp = (double) (lvlMaxPrice - lvl1Price) / TOTAL_XP;
                     if (pricePerXp > 0) {
                         bazaarPrices.put("Pet XP (" + info.name + ")", pricePerXp);
+                        if (GardenProfitConfig.showDebug) {
+                            com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
+                                net.minecraft.client.Minecraft.getInstance(),
+                                "\u00A78[\u00A7eFetch\u00A78] \u00A77Pet XP (" + info.name + ") \u00A7f= \u00A7a" + String.format("%.3f", pricePerXp)
+                            );
+                        }
                     }
                 }
             } catch (Exception e) {
                 System.err.println("[GardenProfit] Failed to fetch Pet XP price for "
                         + info.name + ": " + e.getMessage());
+                if (GardenProfitConfig.showDebug) {
+                    com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
+                        net.minecraft.client.Minecraft.getInstance(),
+                        "\u00A7cFailed to fetch Pet XP: " + info.name
+                    );
+                }
             }
         }
     }
