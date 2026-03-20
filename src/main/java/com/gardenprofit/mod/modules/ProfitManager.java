@@ -262,6 +262,7 @@ public final class ProfitManager {
 
         for (Map.Entry<String, Long> entry : counts.entrySet()) {
             if (ItemConstants.isIgnoredItem(entry.getKey())) continue;
+            if (entry.getValue() == null || entry.getValue() == 0L) continue;
             rows.add(entry);
             lineProfitCache.put(entry.getKey(),
                     BazaarFetcher.getInstance().getItemPrice(entry.getKey()) * entry.getValue());
@@ -296,6 +297,7 @@ public final class ProfitManager {
         for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
             String name = entry.getKey();
             if (ItemConstants.isIgnoredItem(name)) continue;
+            if (entry.getValue() == null || entry.getValue() == 0L) continue;
             long count = entry.getValue();
             double price = BazaarFetcher.getInstance().getItemPrice(name);
             double profit = price * count;
@@ -332,6 +334,7 @@ public final class ProfitManager {
         Map<String, Long> targetCounts = ProfitState.getInstance().getCounts(mode);
         for (Map.Entry<String, Long> entry : targetCounts.entrySet()) {
             if (ItemConstants.isIgnoredItem(entry.getKey())) continue;
+            if (entry.getValue() == null || entry.getValue() == 0L) continue;
             double price = BazaarFetcher.getInstance().getItemPrice(entry.getKey());
             total += price * entry.getValue();
         }
