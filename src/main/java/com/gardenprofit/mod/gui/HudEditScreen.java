@@ -1,12 +1,15 @@
 package com.gardenprofit.mod.gui;
 
+import com.gardenprofit.mod.GardenProfitClient;
 import com.gardenprofit.mod.GardenProfitConfig;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,6 +24,27 @@ public class HudEditScreen {
                 .setParentScreen(parent)
                 .setTitle(Component.literal("Garden Profit Tracker Settings"))
                 .setSavingRunnable(GardenProfitConfig::save);
+        builder.setAfterInitConsumer(screen -> {
+            final int buttonWidth = 92;
+            final int buttonHeight = 20;
+            final int gap = 6;
+            final int totalWidth = buttonWidth * 4 + gap * 3;
+            final int startX = Math.max(8, (screen.width - totalWidth) / 2);
+            final int y = 8;
+
+            addRenderableWidget(screen, Button.builder(Component.literal("Reset"), b -> GardenProfitClient.runResetAction())
+                    .bounds(startX, y, buttonWidth, buttonHeight)
+                    .build());
+            addRenderableWidget(screen, Button.builder(Component.literal("Toggle HUD"), b -> GardenProfitClient.runToggleAction())
+                    .bounds(startX + (buttonWidth + gap), y, buttonWidth, buttonHeight)
+                    .build());
+            addRenderableWidget(screen, Button.builder(Component.literal("Price Mode"), b -> GardenProfitClient.runPriceModeAction())
+                    .bounds(startX + (buttonWidth + gap) * 2, y, buttonWidth, buttonHeight)
+                    .build());
+            addRenderableWidget(screen, Button.builder(Component.literal("Fetch"), b -> GardenProfitClient.runFetchAction())
+                    .bounds(startX + (buttonWidth + gap) * 3, y, buttonWidth, buttonHeight)
+                    .build());
+        });
 
         ConfigEntryBuilder entryBuilder = builder.entryBuilder();
 
@@ -171,5 +195,29 @@ public class HudEditScreen {
                 .build());
 
         return builder.build();
+    }
+
+    private static void addRenderableWidget(Screen screen, Button button) {
+        try {
+            Method method = resolveAddRenderableWidgetMethod(button);
+            method.invoke(screen, button);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to add config action button", e);
+        }
+    }
+
+    private static Method resolveAddRenderableWidgetMethod(Button button) throws NoSuchMethodException {
+        for (Method method : Screen.class.getDeclaredMethods()) {
+            if (!method.getName().equals("addRenderableWidget") || method.getParameterCount() != 1) {
+                continue;
+            }
+            Class<?> parameterType = method.getParameterTypes()[0];
+            if (parameterType.isAssignableFrom(button.getClass())) {
+                method.setAccessible(true);
+                return method;
+            }
+        }
+
+        throw new NoSuchMethodException("No compatible addRenderableWidget overload for " + button.getClass().getName());
     }
 }

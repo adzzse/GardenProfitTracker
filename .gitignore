@@ -15,3 +15,6 @@ bin/
 .classpath
 .project
 local.gradle
+.gradle-local
+.log
+skills/

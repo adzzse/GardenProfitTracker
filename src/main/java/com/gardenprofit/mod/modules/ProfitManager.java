@@ -25,9 +25,25 @@ public final class ProfitManager {
 
     private static final ProfitManager INSTANCE = new ProfitManager();
 
+    public enum DropSource {
+        SACK,
+        PEST,
+        RARE_DROP,
+        PET_DROP,
+        OVERFLOW_DROP,
+        PEST_SHARD,
+        INVENTORY,
+        OTHER
+    }
+
     private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)\u00A7[0-9A-FK-OR]");
+    private static final long PURSE_BASELINE_STABILIZE_MS = 3_000L;
 
     private long lastPurseBalance = -1;
+    private boolean purseBaselinePending = true;
+    private long pendingPurseCandidate = -1;
+    private int pendingPurseStableReads = 0;
+    private long purseBaselinePendingSince = 0L;
 
     // Spray phase flag
     private volatile boolean isSprayPhaseActive = false;
@@ -48,20 +64,22 @@ public final class ProfitManager {
         ProfitState.getInstance().resetSession();
         PetXpTracker.reset();
         INSTANCE.lastPurseBalance = -1;
+        INSTANCE.purseBaselinePending = true;
+        INSTANCE.pendingPurseCandidate = -1;
+        INSTANCE.pendingPurseStableReads = 0;
+        INSTANCE.purseBaselinePendingSince = System.currentTimeMillis();
     }
 
     /**
      * Called on world join to seed the purse baseline.
      */
     public static void onWorldSwitch(Minecraft client) {
-        long currentPurse = ClientUtils.getPurse(client);
-        if (currentPurse != -1) {
-            INSTANCE.lastPurseBalance = currentPurse;
-            ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse baseline set to " + currentPurse + " on join.");
-        } else {
-            INSTANCE.lastPurseBalance = -1;
-            ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse not available on join, will seed on first read.");
-        }
+        INSTANCE.lastPurseBalance = -1;
+        INSTANCE.purseBaselinePending = true;
+        INSTANCE.pendingPurseCandidate = -1;
+        INSTANCE.pendingPurseStableReads = 0;
+        INSTANCE.purseBaselinePendingSince = System.currentTimeMillis();
+        ClientUtils.sendDebugMessage(client, "[ProfitManager] Purse baseline pending on join.");
     }
 
     public static void loadLifetime() { ProfitStorage.getInstance().loadLifetime(); }
@@ -73,6 +91,10 @@ public final class ProfitManager {
      * Core method: normalizes the item name and adds the drop to all tiers.
      */
     public void addDrop(String itemName, long count) {
+        addDropFromSource(itemName, count, DropSource.OTHER);
+    }
+
+    public void addDropFromSource(String itemName, long count, DropSource source) {
         String processedName = STRIP_COLOR_PATTERN.matcher(itemName).replaceAll("").trim();
         long multiplier = 1;
 
@@ -108,15 +130,20 @@ public final class ProfitManager {
             }
         }
 
+        if (source != DropSource.SACK && ItemConstants.isCropItem(matchedName)) {
+            logIgnoredNonSackCrop(source, matchedName, finalCount);
+            return;
+        }
+
         ProfitStorage.getInstance().checkDailyReset();
         ProfitState.getInstance().addDrop(matchedName, finalCount);
     }
 
     /** Called by SackTracker when items are added to sacks. */
-    public void addSackDrop(String itemName, long count) { addDrop(itemName, count); }
+    public void addSackDrop(String itemName, long count) { addDropFromSource(itemName, count, DropSource.SACK); }
 
     /** Called by InventoryTracker when non-sack items appear in inventory. */
-    public void addInventoryDrop(String itemName, long count) { addDrop(itemName, count); }
+    public void addInventoryDrop(String itemName, long count) { addDropFromSource(itemName, count, DropSource.INVENTORY); }
 
     public void addVisitorGain(String itemName, long count) {
         String cleanName = STRIP_COLOR_PATTERN.matcher(itemName).replaceAll("").replace("+", "").trim();
@@ -194,7 +221,7 @@ public final class ProfitManager {
 
         String color = "\u00A77";
         String tag = "OTHER";
-        if (ItemConstants.CROPS.contains(name)) {
+        if (ItemConstants.isCropItem(name)) {
             color = "\u00A7a"; tag = "CROP";
         } else if (ItemConstants.PEST_ITEMS.contains(name)) {
             color = "\u00A7d"; tag = "PEST";
@@ -310,22 +337,34 @@ public final class ProfitManager {
 
         // Track purse changes
         long currentPurse = ClientUtils.getPurse(client);
-        if (currentPurse != -1) {
-            if (INSTANCE.lastPurseBalance != -1) {
-                if (currentPurse > INSTANCE.lastPurseBalance) {
-                    long delta = currentPurse - INSTANCE.lastPurseBalance;
-                    if (delta <= 50000) {
-                        INSTANCE.addDrop("Purse", delta);
-                    } else if (GardenProfitConfig.showDebug) {
-                        ClientUtils.sendDebugMessage(client, "Dismissed large purse change: +" + delta);
-                    }
+        if (INSTANCE.purseBaselinePending) {
+            if (currentPurse != -1) {
+                if (currentPurse == INSTANCE.pendingPurseCandidate) {
+                    INSTANCE.pendingPurseStableReads++;
+                } else {
+                    INSTANCE.pendingPurseCandidate = currentPurse;
+                    INSTANCE.pendingPurseStableReads = 1;
+                }
+
+                long pendingForMs = System.currentTimeMillis() - INSTANCE.purseBaselinePendingSince;
+                if (INSTANCE.pendingPurseStableReads >= 2 || pendingForMs >= PURSE_BASELINE_STABILIZE_MS) {
+                    INSTANCE.lastPurseBalance = currentPurse;
+                    INSTANCE.purseBaselinePending = false;
+                    ClientUtils.sendDebugMessage(client,
+                            "[ProfitManager] Purse baseline finalized at " + currentPurse + ".");
+                }
+            }
+        } else if (currentPurse != -1) {
+            if (INSTANCE.lastPurseBalance != -1 && currentPurse > INSTANCE.lastPurseBalance) {
+                long delta = currentPurse - INSTANCE.lastPurseBalance;
+                if (delta <= 50000) {
+                    INSTANCE.addDrop("Purse", delta);
+                } else if (GardenProfitConfig.showDebug) {
+                    ClientUtils.sendDebugMessage(client, "Dismissed large purse change: +" + delta);
                 }
             }
             INSTANCE.lastPurseBalance = currentPurse;
         }
-
-        // Track Pet XP from tab list
-        PetXpTracker.update(client);
 
         // Refresh bazaar prices every hour
         BazaarFetcher.getInstance().refreshIfNeeded();
@@ -337,6 +376,10 @@ public final class ProfitManager {
 
     public static synchronized void fetchBazaarPrices() {
         BazaarFetcher.getInstance().fetchBazaarPrices();
+    }
+
+    public static void onPriceModeChanged() {
+        BazaarFetcher.getInstance().onPriceModeChanged();
     }
 
     public static void printPetXpPriceDebug(Minecraft client) {
@@ -365,5 +408,12 @@ public final class ProfitManager {
             }
         }
         return b.toString();
+    }
+
+    private static void logIgnoredNonSackCrop(DropSource source, String itemName, long count) {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || !GardenProfitConfig.showDebug) return;
+        ClientUtils.sendDebugMessage(client,
+                "[Drop] Ignored non-sack crop from " + source + ": +" + count + " " + itemName);
     }
 }

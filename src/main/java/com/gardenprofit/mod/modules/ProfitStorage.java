@@ -128,12 +128,17 @@ public final class ProfitStorage {
 
     // ── Bazaar Cache ────────────────────────────────────────────────────
 
-    public void saveBazaarCache(Map<String, Double> bazaarPrices, long fetchTimeMs) {
+    public void saveBazaarCache(Map<String, Double> buyPrices, Map<String, Double> sellPrices, long fetchTimeMs) {
         ensureConfigDir();
-        BazaarCacheData data = new BazaarCacheData(new LinkedHashMap<>(bazaarPrices), fetchTimeMs);
+        BazaarCacheData data = new BazaarCacheData(
+                new LinkedHashMap<>(buyPrices),
+                new LinkedHashMap<>(sellPrices),
+                fetchTimeMs
+        );
         try (FileWriter writer = new FileWriter(BAZAAR_CACHE_FILE)) {
             GSON.toJson(data, writer);
-            System.out.println("[GardenProfit] Bazaar cache saved (" + data.prices.size() + " prices)");
+            System.out.println("[GardenProfit] Bazaar cache saved (buy="
+                    + data.buyPrices.size() + ", sell=" + data.sellPrices.size() + ")");
         } catch (IOException e) {
             System.err.println("[GardenProfit] Failed to save bazaar cache: " + e.getMessage());
         }
@@ -151,10 +156,22 @@ public final class ProfitStorage {
         }
         try (FileReader reader = new FileReader(BAZAAR_CACHE_FILE)) {
             BazaarCacheData data = GSON.fromJson(reader, BazaarCacheData.class);
-            if (data != null && data.prices != null) {
+            if (data != null) {
+                // Backward compatibility: old cache used a single 'prices' field.
+                if (data.buyPrices == null && data.sellPrices == null && data.prices != null) {
+                    data.buyPrices = new LinkedHashMap<>(data.prices);
+                    data.sellPrices = new LinkedHashMap<>(data.prices);
+                } else if (data.buyPrices == null && data.sellPrices != null) {
+                    data.buyPrices = new LinkedHashMap<>(data.sellPrices);
+                } else if (data.sellPrices == null && data.buyPrices != null) {
+                    data.sellPrices = new LinkedHashMap<>(data.buyPrices);
+                }
+            }
+            if (data != null && data.buyPrices != null && data.sellPrices != null) {
                 long ageMinutes = (System.currentTimeMillis() - data.fetchTimeMs) / 60_000;
-                System.out.println("[GardenProfit] Loaded " + data.prices.size()
-                        + " cached bazaar prices (age: " + ageMinutes + " min)");
+                System.out.println("[GardenProfit] Loaded cached bazaar prices (buy="
+                        + data.buyPrices.size() + ", sell=" + data.sellPrices.size()
+                        + ", age: " + ageMinutes + " min)");
                 return data;
             }
         } catch (Exception e) {
@@ -194,13 +211,18 @@ public final class ProfitStorage {
     }
 
     public static class BazaarCacheData {
+        // Preferred dual-side cache fields
+        public Map<String, Double> buyPrices;
+        public Map<String, Double> sellPrices;
+        // Legacy cache field for backward compatibility
         public Map<String, Double> prices;
         public long fetchTimeMs;
 
         public BazaarCacheData() {}
 
-        public BazaarCacheData(Map<String, Double> prices, long fetchTimeMs) {
-            this.prices = prices;
+        public BazaarCacheData(Map<String, Double> buyPrices, Map<String, Double> sellPrices, long fetchTimeMs) {
+            this.buyPrices = buyPrices;
+            this.sellPrices = sellPrices;
             this.fetchTimeMs = fetchTimeMs;
         }
     }

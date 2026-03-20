@@ -25,6 +25,8 @@ public class LocationTracker {
 
     // Strip ALL section-sign formatting codes (Hypixel uses non-standard ones like §y)
     private static final Pattern STRIP_COLOR = Pattern.compile("\u00A7.");
+    private static final Pattern NON_AREA_CHARS = Pattern.compile("[^\\p{L}\\p{N}\\s\\-]");
+    private static final Pattern PEST_COUNTER_SUFFIX = Pattern.compile("\\s+x\\d+\\s*$", Pattern.CASE_INSENSITIVE);
 
     private static String currentArea = "";
     private static boolean inGarden = false;
@@ -64,7 +66,7 @@ public class LocationTracker {
             if (line.contains("\u23E3")) {
                 // The area icon (\u23E3) precedes the area name
                 int idx = line.indexOf('\u23E3');
-                detectedArea = line.substring(idx + 1).trim();
+                detectedArea = normalizeAreaName(line.substring(idx + 1));
                 break;
             }
         }
@@ -154,5 +156,15 @@ public class LocationTracker {
         } else {
             gardenEnteredTime = 0;
         }
+    }
+
+    private static String normalizeAreaName(String rawArea) {
+        if (rawArea == null || rawArea.isBlank()) {
+            return "";
+        }
+
+        String normalized = NON_AREA_CHARS.matcher(rawArea).replaceAll(" ");
+        normalized = PEST_COUNTER_SUFFIX.matcher(normalized).replaceAll("");
+        return normalized.replaceAll("\\s+", " ").trim();
     }
 }
