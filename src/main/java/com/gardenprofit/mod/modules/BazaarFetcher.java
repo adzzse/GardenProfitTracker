@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Handles all HTTP requests to the Coflnet APIs for Bazaar/AH pricing.
@@ -30,11 +31,14 @@ public final class BazaarFetcher {
     private static final BazaarFetcher INSTANCE = new BazaarFetcher();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    private final Map<String, Double> bazaarPrices = new LinkedHashMap<>();
+    private final Map<String, Double> bazaarBuyPrices = new ConcurrentHashMap<>();
+    private final Map<String, Double> bazaarSellPrices = new ConcurrentHashMap<>();
     private final Map<String, Long> petLvl1Prices = new ConcurrentHashMap<>();
     private final Map<String, Long> petMaxLvlPrices = new ConcurrentHashMap<>();
-    private long lastFetchTime = 0;
+    private volatile long lastFetchTime = 0;
     private int startupRetryCount = 3;
+    private final AtomicBoolean fetchInProgress = new AtomicBoolean(false);
+    private final AtomicBoolean fetchQueued = new AtomicBoolean(false);
 
     // Cofl API item-ID cache
     private final Map<String, String> idByNameCache = new ConcurrentHashMap<>();
@@ -43,7 +47,7 @@ public final class BazaarFetcher {
 
     public static BazaarFetcher getInstance() { return INSTANCE; }
 
-    public Map<String, Double> getBazaarPrices() { return bazaarPrices; }
+    public Map<String, Double> getBazaarPrices() { return getActiveBazaarMap(); }
     public long getLastFetchTime() { return lastFetchTime; }
 
     /**
@@ -52,7 +56,8 @@ public final class BazaarFetcher {
     public void startStartupFetch() {
         ProfitStorage.BazaarCacheData cached = ProfitStorage.getInstance().loadBazaarCache();
         if (cached != null) {
-            bazaarPrices.putAll(cached.prices);
+            bazaarBuyPrices.putAll(cached.buyPrices);
+            bazaarSellPrices.putAll(cached.sellPrices);
             lastFetchTime = cached.fetchTimeMs;
         }
         startupRetryCount = 0;
@@ -62,40 +67,24 @@ public final class BazaarFetcher {
     /**
      * Initiates a background fetch of bazaar prices from the Coflnet API.
      */
-    public synchronized void fetchBazaarPrices() {
-        lastFetchTime = System.currentTimeMillis();
-        new Thread(() -> {
-            System.out.println("[GardenProfit] Starting bazaar price fetch...");
-            HttpClient client = HttpClient.newHttpClient();
-            performFetchInternal(client);
+    public void fetchBazaarPrices() {
+        if (!fetchInProgress.compareAndSet(false, true)) {
+            fetchQueued.set(true);
+            return;
+        }
 
-            ProfitStorage.getInstance().saveBazaarCache(bazaarPrices, lastFetchTime);
-            System.out.println("[GardenProfit] Bazaar price fetch complete. " + bazaarPrices.size() + " prices loaded.");
-
-            // Startup retry logic: if any pet price is missing, retry up to 3 times
-            if (startupRetryCount < 3) {
-                boolean missingAny = false;
-                for (String petConfig : GardenProfitConfig.petTrackerList) {
-                    GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
-                    if (!bazaarPrices.containsKey("Pet XP (" + info.name + ")")) {
-                        missingAny = true;
-                        break;
-                    }
-                }
-                if (missingAny) {
-                    startupRetryCount++;
-                    System.out.println("[GardenProfit] Pet XP prices not fully fetched, retry "
-                            + startupRetryCount + "/3 in 5s...");
-                    try {
-                        Thread.sleep(5000L);
-                    } catch (InterruptedException ignored) {
-                    }
+        Thread worker = new Thread(() -> {
+            try {
+                runFetchLoop();
+            } finally {
+                fetchInProgress.set(false);
+                if (fetchQueued.getAndSet(false)) {
                     fetchBazaarPrices();
-                } else {
-                    startupRetryCount = 3;
                 }
             }
-        }).start();
+        }, "GardenProfit-BazaarFetch");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /**
@@ -106,7 +95,7 @@ public final class BazaarFetcher {
             String realName = itemName.substring(10);
             if ("Visitor Cost".equals(realName)) return 1.0;
             if ("Copper".equals(realName)) {
-                double greenThumbPrice = bazaarPrices.getOrDefault("ENCHANTMENT_GREEN_THUMB_1", 0.0);
+                double greenThumbPrice = getActiveBazaarMap().getOrDefault("ENCHANTMENT_GREEN_THUMB_1", 2000000.0);
                 if (greenThumbPrice <= 0) {
                     greenThumbPrice = ItemConstants.TRACKED_ITEMS.getOrDefault("ENCHANTMENT_GREEN_THUMB_1", 0.0);
                 }
@@ -121,7 +110,7 @@ public final class BazaarFetcher {
         if ("[Spray] Sprayonator".equals(itemName) || "Purse".equals(itemName)) {
             return 1.0;
         }
-        double price = bazaarPrices.getOrDefault(itemName, 0.0);
+        double price = getActiveBazaarMap().getOrDefault(itemName, 0.0);
         if (price == 0.0) {
             price = ItemConstants.TRACKED_ITEMS.getOrDefault(itemName, 0.0);
         }
@@ -134,6 +123,13 @@ public final class BazaarFetcher {
     public void refreshIfNeeded() {
         long now = System.currentTimeMillis();
         if (now - lastFetchTime > 3600000L) {
+            fetchBazaarPrices();
+        }
+    }
+
+    public void onPriceModeChanged() {
+        long now = System.currentTimeMillis();
+        if (getActiveBazaarMap().isEmpty() || now - lastFetchTime > 3600000L) {
             fetchBazaarPrices();
         }
     }
@@ -183,7 +179,7 @@ public final class BazaarFetcher {
             GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
             long lvl1 = petLvl1Prices.getOrDefault(info.name, 0L);
             long lvlMax = petMaxLvlPrices.getOrDefault(info.name, 0L);
-            double pricePerXp = bazaarPrices.getOrDefault("Pet XP (" + info.name + ")", 0.0);
+            double pricePerXp = getActiveBazaarMap().getOrDefault("Pet XP (" + info.name + ")", 0.0);
 
             String lvl1Str = lvl1 > 0 ? String.format("%,d", lvl1) : "not found";
             String lvlMaxStr = lvlMax > 0 ? String.format("%,d", lvlMax) : "not found";
@@ -200,7 +196,7 @@ public final class BazaarFetcher {
 
     // ── Internal fetch logic ────────────────────────────────────────────
 
-    private void performFetchInternal(HttpClient client) {
+    private FetchSummary performFetchInternal(HttpClient client) {
         int fetched = 0;
         int failed = 0;
         for (Map.Entry<String, String> entry : ItemConstants.BAZAAR_MAPPING.entrySet()) {
@@ -216,17 +212,22 @@ public final class BazaarFetcher {
                 if (response.statusCode() == 200) {
                     BazaarApiResponse data = GSON.fromJson(response.body(), BazaarApiResponse.class);
                     if (data != null) {
-                        double price = GardenProfitConfig.useBazaarSellPrice ? data.sell : data.buy;
-                        if (price > 0) {
-                            bazaarPrices.put(itemName, price);
+                        if (data.buy > 0) {
+                            bazaarBuyPrices.put(itemName, data.buy);
+                        }
+                        if (data.sell > 0) {
+                            bazaarSellPrices.put(itemName, data.sell);
+                        }
+                        if (data.buy > 0 || data.sell > 0) {
                             fetched++;
+                            double activePrice = getActiveBazaarMap().getOrDefault(itemName, 0.0);
                             String priceType = GardenProfitConfig.useBazaarSellPrice ? "sell" : "buy";
                             System.out.println("[GardenProfit] Price (" + priceType + "): "
-                                    + itemName + " = " + String.format("%.1f", price));
+                                    + itemName + " = " + String.format("%.1f", activePrice));
                             if (GardenProfitConfig.showDebug) {
                                 com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
                                     net.minecraft.client.Minecraft.getInstance(),
-                                    "\u00A78[\u00A7eFetch\u00A78] \u00A77" + itemName + " \u00A7f= \u00A7a" + String.format("%.1f", price)
+                                    "\u00A78[\u00A7eFetch\u00A78] \u00A77" + itemName + " \u00A7f= \u00A7a" + String.format("%.1f", activePrice)
                                 );
                             }
                         }
@@ -254,6 +255,53 @@ public final class BazaarFetcher {
         }
         System.out.println("[GardenProfit] Bazaar items: " + fetched + " fetched, " + failed + " failed.");
         fetchPetXpPrice(client);
+        return new FetchSummary(fetched, failed);
+    }
+
+    private void runFetchLoop() {
+        boolean retry;
+        do {
+            System.out.println("[GardenProfit] Starting bazaar price fetch...");
+            HttpClient client = HttpClient.newHttpClient();
+            FetchSummary summary = performFetchInternal(client);
+            if (summary.fetched > 0) {
+                lastFetchTime = System.currentTimeMillis();
+                ProfitStorage.getInstance().saveBazaarCache(
+                        new LinkedHashMap<>(bazaarBuyPrices),
+                        new LinkedHashMap<>(bazaarSellPrices),
+                        lastFetchTime);
+                System.out.println("[GardenProfit] Bazaar price fetch complete. buy="
+                        + bazaarBuyPrices.size() + ", sell=" + bazaarSellPrices.size());
+            } else {
+                System.err.println("[GardenProfit] Bazaar fetch returned no successful items; keeping previous fetch timestamp.");
+            }
+
+            retry = shouldRetryPetFetch();
+            if (retry) {
+                startupRetryCount++;
+                System.out.println("[GardenProfit] Pet XP prices not fully fetched, retry "
+                        + startupRetryCount + "/3 in 5s...");
+                try {
+                    Thread.sleep(5000L);
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    retry = false;
+                }
+            } else {
+                startupRetryCount = 3;
+            }
+        } while (retry);
+    }
+
+    private boolean shouldRetryPetFetch() {
+        if (startupRetryCount >= 3) return false;
+        for (String petConfig : GardenProfitConfig.petTrackerList) {
+            GardenProfitConfig.PetInfo info = new GardenProfitConfig.PetInfo(petConfig);
+            if (!bazaarSellPrices.containsKey("Pet XP (" + info.name + ")")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void fetchPetXpPrice(HttpClient http) {
@@ -310,7 +358,9 @@ public final class BazaarFetcher {
                 if (lvlMaxPrice > lvl1Price && lvl1Price > 0) {
                     double pricePerXp = (double) (lvlMaxPrice - lvl1Price) / TOTAL_XP;
                     if (pricePerXp > 0) {
-                        bazaarPrices.put("Pet XP (" + info.name + ")", pricePerXp);
+                        String key = "Pet XP (" + info.name + ")";
+                        bazaarBuyPrices.put(key, pricePerXp);
+                        bazaarSellPrices.put(key, pricePerXp);
                         if (GardenProfitConfig.showDebug) {
                             com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(
                                 net.minecraft.client.Minecraft.getInstance(),
@@ -342,5 +392,19 @@ public final class BazaarFetcher {
     private static class OverviewEntry {
         long price;
         String uuid;
+    }
+
+    private static class FetchSummary {
+        final int fetched;
+        final int failed;
+
+        private FetchSummary(int fetched, int failed) {
+            this.fetched = fetched;
+            this.failed = failed;
+        }
+    }
+
+    private Map<String, Double> getActiveBazaarMap() {
+        return GardenProfitConfig.useBazaarSellPrice ? bazaarSellPrices : bazaarBuyPrices;
     }
 }

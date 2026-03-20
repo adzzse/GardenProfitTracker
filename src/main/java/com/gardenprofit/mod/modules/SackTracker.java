@@ -1,6 +1,5 @@
 package com.gardenprofit.mod.modules;
 
-import com.gardenprofit.mod.GardenProfitConfig;
 import com.gardenprofit.mod.util.ClientUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -8,6 +7,7 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.Style;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,21 +21,13 @@ import java.util.regex.Pattern;
  * going into sacks. The server sends exact item names and counts in
  * the hover text of the chat message siblings.
  */
-public class SackTracker implements ModEventHandler {
+public class SackTracker {
 
     private static final SackTracker INSTANCE = new SackTracker();
 
     private SackTracker() {}
 
     public static SackTracker getInstance() { return INSTANCE; }
-
-    @Override
-    public int getPriority() { return 0; } // T0 -- highest priority
-
-    @Override
-    public void onChatMessage(Component component) {
-        handleChatMessage(component);
-    }
 
     // Regex to parse each line in the hover text: "+128 Wheat (Agronomy Sack)"
     private static final Pattern SACK_CHANGE_PATTERN = Pattern.compile(
@@ -48,24 +40,31 @@ public class SackTracker implements ModEventHandler {
     private static boolean inSackInventory = false;
     private static long lastSackInventoryCloseTime = 0;
     private static final long SACK_INVENTORY_COOLDOWN_MS = 10_000;
+    private static final long STASH_TRANSFER_COOLDOWN_MS = 6_000;
+    private static final long DUPLICATE_FINGERPRINT_WINDOW_MS = 4_000;
+    private static final Map<String, Long> recentFingerprints = new LinkedHashMap<>();
+    private static long lastManualTransferTime = 0;
 
     /**
      * Called when any GUI/inventory is opened. If the title contains "Sack",
      * we mark that we're inside a sack inventory to suppress tracking.
-    @Override
+     */
     public void onInventoryOpen(String inventoryName) {
-        if (inventoryName != null && inventoryName.contains("Sack")) {
+        if (inventoryName != null && (inventoryName.contains("Sack") || inventoryName.contains("Material Stash"))) {
             inSackInventory = true;
+            ClientUtils.sendDebugMessage(Minecraft.getInstance(),
+                    "[Sack] Manual transfer suppression active: opened '" + inventoryName + "'.");
         }
     }
 
     /**
      * Called when any GUI/inventory is closed.
-    @Override
+     */
     public void onInventoryClose() {
         if (inSackInventory) {
             inSackInventory = false;
             lastSackInventoryCloseTime = System.currentTimeMillis();
+            ClientUtils.sendDebugMessage(Minecraft.getInstance(), "[Sack] Manual transfer suppression cooldown started.");
         }
     }
 
@@ -76,9 +75,22 @@ public class SackTracker implements ModEventHandler {
      */
     public static boolean handleChatMessage(Component message) {
         String plainText = message.getString();
-        if (plainText == null || !plainText.contains("[Sacks]")) {
+        if (plainText == null) {
             return false;
         }
+
+        String strippedText = STRIP_COLOR.matcher(plainText).replaceAll("").trim();
+        if (strippedText.startsWith("From stash:") || strippedText.contains("items from your material stash")) {
+            lastManualTransferTime = System.currentTimeMillis();
+            ClientUtils.sendDebugMessage(Minecraft.getInstance(),
+                    "[Sack] Manual transfer suppression active: stash pickup detected.");
+        }
+
+        if (!plainText.contains("[Sacks]")) {
+            return false;
+        }
+
+        purgeExpiredFingerprints();
 
         // Don't track sack changes while in a sack inventory or within cooldown
         // (manual transfers, not farming)
@@ -89,12 +101,28 @@ public class SackTracker implements ModEventHandler {
         if (timeSinceClose < SACK_INVENTORY_COOLDOWN_MS) {
             return true;
         }
+        long timeSinceManualTransfer = System.currentTimeMillis() - lastManualTransferTime;
+        if (timeSinceManualTransfer < STASH_TRANSFER_COOLDOWN_MS) {
+            return true;
+        }
 
         // Extract hover text from all siblings
         // Use a set to deduplicate: the same hover text can appear on multiple siblings
-        List<SackChange> changes = new ArrayList<>();
-        Set<String> seenHoverTexts = new HashSet<>();
-        extractHoverChanges(message, changes, seenHoverTexts);
+        List<String> hoverTexts = new ArrayList<>();
+        extractHoverTexts(message, hoverTexts, new HashSet<>());
+        if (hoverTexts.isEmpty()) {
+            return true;
+        }
+
+        String fingerprint = buildFingerprint(hoverTexts);
+        if (recentFingerprints.containsKey(fingerprint)) {
+            ClientUtils.sendDebugMessage(Minecraft.getInstance(),
+                    "[Sack] Ignored duplicated sack payload.");
+            return true;
+        }
+        recentFingerprints.put(fingerprint, System.currentTimeMillis() + DUPLICATE_FINGERPRINT_WINDOW_MS);
+
+        List<SackChange> changes = parseHoverTexts(hoverTexts);
 
         // Net all changes per item name before reporting
         // Auto-crafting causes the same item to appear in both Added (+) and Removed (-)
@@ -106,14 +134,16 @@ public class SackTracker implements ModEventHandler {
             sackNames.putIfAbsent(change.itemName, change.sackName);
         }
 
-        // Only report net positive gains
+        // Report non-zero net changes (positive + negative).
+        // This allows visitor fulfillment and other sack removals to be tracked.
         for (Map.Entry<String, Integer> entry : netChanges.entrySet()) {
-            if (entry.getValue() > 0) {
+            if (entry.getValue() != 0) {
                 String itemName = entry.getKey();
                 int netDelta = entry.getValue();
 
-                // Skip items recently purchased from Bazaar (they are tracked as costs)
-                if (ProfitManager.isBazaarPurchaseIgnored(itemName)) {
+                // Skip recent Bazaar purchases only for positive adds
+                // (we still want to track negative removals, e.g. visitor usage).
+                if (netDelta > 0 && ProfitManager.isBazaarPurchaseIgnored(itemName)) {
                     Minecraft client = Minecraft.getInstance();
                     ClientUtils.sendDebugMessage(client,
                             "[Sack] Ignored bazaar purchase: +" + netDelta + " " + itemName);
@@ -123,8 +153,9 @@ public class SackTracker implements ModEventHandler {
                 ProfitManager.getInstance().addSackDrop(itemName, netDelta);
 
                 Minecraft client = Minecraft.getInstance();
+                String signedDelta = (netDelta > 0 ? "+" : "") + netDelta;
                 ClientUtils.sendDebugMessage(client,
-                        "[Sack] +" + netDelta + " " + itemName
+                        "[Sack] " + signedDelta + " " + itemName
                                 + " (" + sackNames.getOrDefault(itemName, "?") + ")");
             }
         }
@@ -133,25 +164,24 @@ public class SackTracker implements ModEventHandler {
     }
 
     /**
-     * Recursively extract hover text from a Component and all its siblings,
-     * looking for "Added" or "Removed" hover text and parsing sack changes.
+     * Recursively extract hover text from a Component and all its siblings.
      */
-    private static void extractHoverChanges(Component component, List<SackChange> changes, Set<String> seenHoverTexts) {
+    private static void extractHoverTexts(Component component, List<String> hoverTexts, Set<String> seenHoverTexts) {
         // Check this component's hover event
-        extractFromStyle(component.getStyle(), changes, seenHoverTexts);
+        extractFromStyle(component.getStyle(), hoverTexts, seenHoverTexts);
 
         // Recurse into all siblings
         for (Component sibling : component.getSiblings()) {
-            extractHoverChanges(sibling, changes, seenHoverTexts);
+            extractHoverTexts(sibling, hoverTexts, seenHoverTexts);
         }
     }
 
     /**
-     * Extract sack changes from a Style's HoverEvent if present.
+     * Extract sack hover text from a Style's HoverEvent if present.
      * Uses seenHoverTexts to skip hover text we already processed
      * (the same hover can appear on multiple siblings).
      */
-    private static void extractFromStyle(Style style, List<SackChange> changes, Set<String> seenHoverTexts) {
+    private static void extractFromStyle(Style style, List<String> hoverTexts, Set<String> seenHoverTexts) {
         if (style == null) return;
 
         HoverEvent hover = style.getHoverEvent();
@@ -172,27 +202,47 @@ public class SackTracker implements ModEventHandler {
         // Skip if we already processed this exact hover text in this message
         if (!seenHoverTexts.add(hoverText)) return;
 
-        // Only process "Added" sections (items going INTO sacks from farming)
+        // Process both Added and Removed sections.
         if (!hoverText.startsWith("Added") && !hoverText.startsWith("Removed")) {
             return;
         }
 
-        // Parse each line
-        for (String line : hoverText.split("\n")) {
-            String cleanLine = line.trim();
-            Matcher matcher = SACK_CHANGE_PATTERN.matcher(cleanLine);
-            if (matcher.find()) {
-                try {
-                    String deltaStr = matcher.group(1).replace(",", "");
-                    int delta = Integer.parseInt(deltaStr);
-                    String itemName = matcher.group(2).trim();
-                    String sackName = matcher.group(3).trim();
+        hoverTexts.add(hoverText);
+    }
 
-                    changes.add(new SackChange(delta, itemName, sackName));
-                } catch (NumberFormatException ignored) {
+    private static List<SackChange> parseHoverTexts(List<String> hoverTexts) {
+        List<SackChange> changes = new ArrayList<>();
+
+        for (String hoverText : hoverTexts) {
+            for (String line : hoverText.split("\n")) {
+                String cleanLine = line.trim();
+                Matcher matcher = SACK_CHANGE_PATTERN.matcher(cleanLine);
+                if (matcher.find()) {
+                    try {
+                        String deltaStr = matcher.group(1).replace(",", "");
+                        int delta = Integer.parseInt(deltaStr);
+                        String itemName = matcher.group(2).trim();
+                        String sackName = matcher.group(3).trim();
+
+                        changes.add(new SackChange(delta, itemName, sackName));
+                    } catch (NumberFormatException ignored) {
+                    }
                 }
             }
         }
+
+        return changes;
+    }
+
+    private static String buildFingerprint(List<String> hoverTexts) {
+        List<String> sorted = new ArrayList<>(hoverTexts);
+        Collections.sort(sorted);
+        return String.join("\n---\n", sorted);
+    }
+
+    private static void purgeExpiredFingerprints() {
+        long now = System.currentTimeMillis();
+        recentFingerprints.entrySet().removeIf(entry -> entry.getValue() < now);
     }
 
     /**

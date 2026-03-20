@@ -1,6 +1,5 @@
 package com.gardenprofit.mod.modules;
 
-import com.gardenprofit.mod.GardenProfitConfig;
 import com.gardenprofit.mod.util.ClientUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -18,7 +17,7 @@ import java.util.regex.Pattern;
  * This class is stateless except for the visitor-reward tracking state
  * machine which spans multiple consecutive messages.
  */
-public final class ChatMessageParser implements ModEventHandler {
+public final class ChatMessageParser {
 
     private static final ChatMessageParser INSTANCE = new ChatMessageParser();
 
@@ -59,13 +58,8 @@ public final class ChatMessageParser implements ModEventHandler {
 
     public static ChatMessageParser getInstance() { return INSTANCE; }
 
-    @Override
-    public int getPriority() {
-        return 1; // T1
-    }
-
-    @Override
-    public void onChatMessage(Component component) {
+    public void handleChatMessage(Component component) {
+        purgeExpiredBazaarPurchaseIgnores();
         String text = toLegacyText(component);
 
         // PET DROP needs raw text to detect color-coded rarity
@@ -84,7 +78,7 @@ public final class ChatMessageParser implements ModEventHandler {
             } else if (petName.equalsIgnoreCase("Rat")) {
                 finalName = "Rat";
             }
-            ProfitManager.getInstance().addDrop(finalName, 1);
+            ProfitManager.getInstance().addDropFromSource(finalName, 1, ProfitManager.DropSource.PET_DROP);
             return;
         }
 
@@ -97,7 +91,7 @@ public final class ChatMessageParser implements ModEventHandler {
                 String countStr = overflowMatcher.group(1);
                 int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
                 String itemName = overflowMatcher.group(2).trim();
-                ProfitManager.getInstance().addDrop(itemName, count);
+                ProfitManager.getInstance().addDropFromSource(itemName, count, ProfitManager.DropSource.OVERFLOW_DROP);
                 return;
             } catch (Exception ignored) {
             }
@@ -108,13 +102,7 @@ public final class ChatMessageParser implements ModEventHandler {
             try {
                 int count = Integer.parseInt(pestMatcher.group(1));
                 String itemName = pestMatcher.group(2).trim();
-                // Crops go to sacks -- SackTracker (T0) already handles them
-                if (ItemConstants.CROPS.contains(itemName)) {
-                    ClientUtils.sendDebugMessage(Minecraft.getInstance(),
-                            "[Chat] Skipping pest crop '" + itemName + "' (handled by SackTracker)");
-                    return;
-                }
-                ProfitManager.getInstance().addDrop(itemName, count);
+                ProfitManager.getInstance().addDropFromSource(itemName, count, ProfitManager.DropSource.PEST);
                 return;
             } catch (Exception ignored) {
             }
@@ -126,7 +114,7 @@ public final class ChatMessageParser implements ModEventHandler {
                 String countStr = rareMatcher.group(1);
                 int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
                 String itemName = rareMatcher.group(2).trim();
-                ProfitManager.getInstance().addDrop(itemName, count);
+                ProfitManager.getInstance().addDropFromSource(itemName, count, ProfitManager.DropSource.RARE_DROP);
             } catch (Exception ignored) {
             }
         }
@@ -136,7 +124,7 @@ public final class ChatMessageParser implements ModEventHandler {
             try {
                 String countStr = shardMatcher.group(1);
                 int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-                ProfitManager.getInstance().addDrop("Pest Shard", count);
+                ProfitManager.getInstance().addDropFromSource("Pest Shard", count, ProfitManager.DropSource.PEST_SHARD);
             } catch (Exception ignored) {
             }
         }
@@ -232,6 +220,11 @@ public final class ChatMessageParser implements ModEventHandler {
             return false;
         }
         return true;
+    }
+
+    private void purgeExpiredBazaarPurchaseIgnores() {
+        long now = System.currentTimeMillis();
+        recentBazaarPurchases.entrySet().removeIf(entry -> entry.getValue() <= now);
     }
 
     // ── Text utilities ──────────────────────────────────────────────────

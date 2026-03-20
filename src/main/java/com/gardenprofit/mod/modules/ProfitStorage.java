@@ -12,7 +12,8 @@ import java.lang.reflect.Type;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Handles all JSON file persistence (load/save) and daily-reset logic
@@ -38,6 +39,11 @@ public final class ProfitStorage {
             .getConfigDir().resolve("gardenprofit_bazaar_cache.json").toFile();
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final ExecutorService IO_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "GardenProfit-StorageIO");
+        t.setDaemon(true);
+        return t;
+    });
 
     private String lastDailyResetDate = getCurrentDateString();
 
@@ -50,7 +56,7 @@ public final class ProfitStorage {
     public void saveLifetime() {
         ensureConfigDir();
         Map<String, Long> copy = new LinkedHashMap<>(ProfitState.getInstance().getCounts("lifetime"));
-        CompletableFuture.runAsync(() -> {
+        IO_EXECUTOR.execute(() -> {
             try (FileWriter writer = new FileWriter(LIFETIME_FILE)) {
                 GSON.toJson(copy, writer);
             } catch (IOException e) {
@@ -65,7 +71,7 @@ public final class ProfitStorage {
         try (FileReader reader = new FileReader(LIFETIME_FILE)) {
             Type type = new TypeToken<Map<String, Long>>() {}.getType();
             Map<String, Long> data = GSON.fromJson(reader, type);
-            ProfitState.getInstance().setLifetimeCounts(data);
+            ProfitState.getInstance().setLifetimeCounts(migrateLegacyLedgerKeys(data));
         } catch (Exception e) {
             System.err.println("[GardenProfit] Failed to load lifetime profit data: " + e.getMessage());
         }
@@ -80,7 +86,7 @@ public final class ProfitStorage {
                 ProfitState.getInstance().getSprayQuantity("daily"),
                 lastDailyResetDate
         );
-        CompletableFuture.runAsync(() -> {
+        IO_EXECUTOR.execute(() -> {
             try (FileWriter writer = new FileWriter(DAILY_FILE)) {
                 GSON.toJson(data, writer);
             } catch (IOException e) {
@@ -101,7 +107,7 @@ public final class ProfitStorage {
                     lastDailyResetDate = getCurrentDateString();
                     saveDaily();
                 } else {
-                    ProfitState.getInstance().setDailyCounts(data.counts);
+                    ProfitState.getInstance().setDailyCounts(migrateLegacyLedgerKeys(data.counts));
                     ProfitState.getInstance().setSprayDailyQuantity(data.sprayQuantity);
                 }
             }
@@ -128,12 +134,17 @@ public final class ProfitStorage {
 
     // ── Bazaar Cache ────────────────────────────────────────────────────
 
-    public void saveBazaarCache(Map<String, Double> bazaarPrices, long fetchTimeMs) {
+    public void saveBazaarCache(Map<String, Double> buyPrices, Map<String, Double> sellPrices, long fetchTimeMs) {
         ensureConfigDir();
-        BazaarCacheData data = new BazaarCacheData(new LinkedHashMap<>(bazaarPrices), fetchTimeMs);
+        BazaarCacheData data = new BazaarCacheData(
+                new LinkedHashMap<>(buyPrices),
+                new LinkedHashMap<>(sellPrices),
+                fetchTimeMs
+        );
         try (FileWriter writer = new FileWriter(BAZAAR_CACHE_FILE)) {
             GSON.toJson(data, writer);
-            System.out.println("[GardenProfit] Bazaar cache saved (" + data.prices.size() + " prices)");
+            System.out.println("[GardenProfit] Bazaar cache saved (buy="
+                    + data.buyPrices.size() + ", sell=" + data.sellPrices.size() + ")");
         } catch (IOException e) {
             System.err.println("[GardenProfit] Failed to save bazaar cache: " + e.getMessage());
         }
@@ -151,10 +162,22 @@ public final class ProfitStorage {
         }
         try (FileReader reader = new FileReader(BAZAAR_CACHE_FILE)) {
             BazaarCacheData data = GSON.fromJson(reader, BazaarCacheData.class);
-            if (data != null && data.prices != null) {
+            if (data != null) {
+                // Backward compatibility: old cache used a single 'prices' field.
+                if (data.buyPrices == null && data.sellPrices == null && data.prices != null) {
+                    data.buyPrices = new LinkedHashMap<>(data.prices);
+                    data.sellPrices = new LinkedHashMap<>(data.prices);
+                } else if (data.buyPrices == null && data.sellPrices != null) {
+                    data.buyPrices = new LinkedHashMap<>(data.sellPrices);
+                } else if (data.sellPrices == null && data.buyPrices != null) {
+                    data.sellPrices = new LinkedHashMap<>(data.buyPrices);
+                }
+            }
+            if (data != null && data.buyPrices != null && data.sellPrices != null) {
                 long ageMinutes = (System.currentTimeMillis() - data.fetchTimeMs) / 60_000;
-                System.out.println("[GardenProfit] Loaded " + data.prices.size()
-                        + " cached bazaar prices (age: " + ageMinutes + " min)");
+                System.out.println("[GardenProfit] Loaded cached bazaar prices (buy="
+                        + data.buyPrices.size() + ", sell=" + data.sellPrices.size()
+                        + ", age: " + ageMinutes + " min)");
                 return data;
             }
         } catch (Exception e) {
@@ -194,13 +217,18 @@ public final class ProfitStorage {
     }
 
     public static class BazaarCacheData {
+        // Preferred dual-side cache fields
+        public Map<String, Double> buyPrices;
+        public Map<String, Double> sellPrices;
+        // Legacy cache field for backward compatibility
         public Map<String, Double> prices;
         public long fetchTimeMs;
 
         public BazaarCacheData() {}
 
-        public BazaarCacheData(Map<String, Double> prices, long fetchTimeMs) {
-            this.prices = prices;
+        public BazaarCacheData(Map<String, Double> buyPrices, Map<String, Double> sellPrices, long fetchTimeMs) {
+            this.buyPrices = buyPrices;
+            this.sellPrices = sellPrices;
             this.fetchTimeMs = fetchTimeMs;
         }
     }
@@ -224,5 +252,29 @@ public final class ProfitStorage {
                 System.out.println("[GardenProfit] Migrated " + oldFile.getName() + " -> " + newFile.getPath());
             }
         }
+    }
+
+    private static Map<String, Long> migrateLegacyLedgerKeys(Map<String, Long> input) {
+        Map<String, Long> normalized = new LinkedHashMap<>();
+        if (input == null) {
+            return normalized;
+        }
+
+        for (Map.Entry<String, Long> entry : input.entrySet()) {
+            String key = entry.getKey();
+            long value = entry.getValue() == null ? 0L : entry.getValue();
+
+            if (ItemConstants.VISITOR_COST_KEY_LEGACY.equals(key)) {
+                normalized.merge(ItemConstants.VISITOR_COST_KEY, value, Long::sum);
+                continue;
+            }
+            if (ItemConstants.VISITOR_COUNT_KEY_LEGACY.equals(key) || ItemConstants.VISITOR_SERVICES_KEY_LEGACY.equals(key)) {
+                normalized.merge(ItemConstants.VISITOR_COST_COUNT_KEY, value, Long::sum);
+                continue;
+            }
+            normalized.merge(key, value, Long::sum);
+        }
+
+        return normalized;
     }
 }

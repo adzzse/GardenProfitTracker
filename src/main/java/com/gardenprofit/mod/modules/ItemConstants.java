@@ -1,7 +1,9 @@
 package com.gardenprofit.mod.modules;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Single source of truth for all item names, prices, and bazaar mappings
@@ -10,6 +12,16 @@ import java.util.Set;
 public final class ItemConstants {
 
     private ItemConstants() {} // Utility class
+
+    // Canonical internal ledger keys
+    public static final String SPRAY_COST_KEY = "[Spray] Sprayonator";
+    public static final String VISITOR_PREFIX = "[Visitor] ";
+    public static final String VISITOR_COST_KEY = "[Visitor] Visitor Cost";
+    public static final String VISITOR_COST_COUNT_KEY = "[Visitor] Visitor Cost Count";
+    // Legacy keys kept for backward-compatibility during migration
+    public static final String VISITOR_COST_KEY_LEGACY = "[Visitor] Visitor";
+    public static final String VISITOR_SERVICES_KEY_LEGACY = "[Visitor] Visitors Served";
+    public static final String VISITOR_COUNT_KEY_LEGACY = "[Visitor] Visitor Count";
 
     // ── Item Category Sets ──────────────────────────────────────────────
 
@@ -29,6 +41,9 @@ public final class ItemConstants {
             "Sunflower", "Enchanted Sunflower", "Compacted Sunflower",
             "Moonflower", "Enchanted Moonflower", "Compacted Moonflower",
             "Wild Rose", "Enchanted Wild Rose", "Compacted Wild Rose");
+    private static final Set<String> CROP_KEYS = CROPS.stream()
+            .map(ItemConstants::normalizeItemKey)
+            .collect(Collectors.toUnmodifiableSet());
 
     public static final Set<String> PEST_ITEMS = Set.of(
             "Beady Eyes", "Chirping Stereo", "Sunder VI Book", "Clipped Wings",
@@ -212,8 +227,8 @@ public final class ItemConstants {
             Map.entry("Godseed", "GODSEED"), Map.entry("Jerryflower.", "JERRYFLOWER"),
             Map.entry("Phantomleaf", "PHANTOMLEAF"), Map.entry("Timestalk", "TIMESTALK"),
 
-            Map.entry("Tool Exp Capsule", "TOOL_EXP_CAPSULE"),
-            Map.entry("Green Thumb 1 Enchant", "ENCHANTMENT_GREEN_THUMB_1"),
+            Map.entry("Tool EXP Capsule", "TOOL_EXP_CAPSULE"),
+            Map.entry("ENCHANTMENT_GREEN_THUMB_1", "ENCHANTMENT_GREEN_THUMB_1"),
 
             // Visitor / Rare Drops Mappings
             Map.entry("Overgrown Grass", "OVERGROWN_GRASS"),
@@ -269,8 +284,9 @@ public final class ItemConstants {
      */
     public static boolean isIgnoredItem(String name) {
         if (name == null) return false;
-        if (name.equals("[Visitor] Visitors Served")) return true;
-        if (name.equals("[Visitor] Visitor Cost Count")) return true;
+        if (name.equals(VISITOR_SERVICES_KEY_LEGACY)) return true;
+        if (name.equals(VISITOR_COUNT_KEY_LEGACY)) return true;
+        if (name.equals(VISITOR_COST_COUNT_KEY)) return true;
         String lower = name.toLowerCase();
         return lower.contains("rune") || lower.endsWith("vinyl") || lower.equals("vinyl");
     }
@@ -291,15 +307,27 @@ public final class ItemConstants {
     }
 
     /**
+     * Returns true if the item is a crop (case-insensitive).
+     */
+    public static boolean isCropItem(String itemName) {
+        if (itemName == null) return false;
+        return CROP_KEYS.contains(normalizeItemKey(itemName));
+    }
+
+    /**
      * Returns the item category for display/grouping purposes.
      */
     public static String getCategory(String name) {
-        if (name.equals("[Spray] Sprayonator") || name.equals("[Visitor] Visitor Cost")) return "Costs";
-        if (name.startsWith("[Visitor] ")) return "Visitor";
-        if (CROPS.contains(name)) return "Crops";
+        if (name.equals(SPRAY_COST_KEY) || name.equals(VISITOR_COST_KEY) || name.equals(VISITOR_COST_KEY_LEGACY)) return "Costs";
+        if (name.startsWith(VISITOR_PREFIX)) return "Visitor";
+        if (isCropItem(name)) return "Crops";
         if (PEST_ITEMS.contains(name)) return "Pest Items";
         if (PETS.contains(name)) return "Pets";
         if (MISC_DROPS.contains(name) || name.toLowerCase().startsWith("pet xp (")) return "Misc";
         return "Others";
+    }
+
+    private static String normalizeItemKey(String itemName) {
+        return itemName.trim().toLowerCase(Locale.ROOT);
     }
 }
