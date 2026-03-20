@@ -238,6 +238,33 @@ public class ProfitHudRenderer {
         }
     }
 
+    public static boolean adjustHoveredScale(double mouseX, double mouseY, double scrollAmount) {
+        if (scrollAmount == 0) {
+            return false;
+        }
+
+        if (GardenProfitConfig.showLifetimeHud && isHoveredInternal(mouseX, mouseY, "lifetime")) {
+            GardenProfitConfig.lifetimeHudScale = clampScale(GardenProfitConfig.lifetimeHudScale + (float) (scrollAmount * 0.05f));
+            GardenProfitConfig.save();
+            return true;
+        }
+        if (GardenProfitConfig.showDailyHud && isHoveredInternal(mouseX, mouseY, "daily")) {
+            GardenProfitConfig.dailyHudScale = clampScale(GardenProfitConfig.dailyHudScale + (float) (scrollAmount * 0.05f));
+            GardenProfitConfig.save();
+            return true;
+        }
+        if (GardenProfitConfig.showSessionProfitHud && isHoveredInternal(mouseX, mouseY, "session")) {
+            GardenProfitConfig.sessionProfitHudScale = clampScale(GardenProfitConfig.sessionProfitHudScale + (float) (scrollAmount * 0.05f));
+            GardenProfitConfig.save();
+            return true;
+        }
+        return false;
+    }
+
+    private static float clampScale(float value) {
+        return Math.max(0.5f, Math.min(2.5f, value));
+    }
+
     private static void render(GuiGraphics g, Minecraft client, String mode, boolean editMode) {
         if (client.player == null)
             return;

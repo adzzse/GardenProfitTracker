@@ -2,51 +2,32 @@ package com.gardenprofit.mod.gui;
 
 import com.gardenprofit.mod.GardenProfitClient;
 import com.gardenprofit.mod.GardenProfitConfig;
-import com.gardenprofit.mod.GardenProfit;
+import com.gardenprofit.mod.modules.ProfitManager;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
-import net.fabricmc.fabric.api.client.screen.v1.Screens;
+import me.shedaniel.clothconfig2.gui.entries.TooltipListEntry;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.events.GuiEventListener;
+import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Configuration screen built with Cloth Config API.
  * Opened via /gardenprofit command.
  */
 public class HudEditScreen {
-    private static boolean loggedButtonAddFailure = false;
-
     public static Screen create(Screen parent) {
         ConfigBuilder builder = ConfigBuilder.create()
                 .setParentScreen(parent)
                 .setTitle(Component.literal("Garden Profit Tracker Settings"))
                 .setSavingRunnable(GardenProfitConfig::save);
-        builder.setAfterInitConsumer(screen -> {
-            final int buttonWidth = 92;
-            final int buttonHeight = 20;
-            final int gap = 6;
-            final int totalWidth = buttonWidth * 4 + gap * 3;
-            final int startX = Math.max(8, (screen.width - totalWidth) / 2);
-            final int y = 8;
-
-            addRenderableWidget(screen, Button.builder(Component.literal("Reset"), b -> GardenProfitClient.runResetAction())
-                    .bounds(startX, y, buttonWidth, buttonHeight)
-                    .build());
-            addRenderableWidget(screen, Button.builder(Component.literal("Toggle HUD"), b -> GardenProfitClient.runToggleAction())
-                    .bounds(startX + (buttonWidth + gap), y, buttonWidth, buttonHeight)
-                    .build());
-            addRenderableWidget(screen, Button.builder(Component.literal("Price Mode"), b -> GardenProfitClient.runPriceModeAction())
-                    .bounds(startX + (buttonWidth + gap) * 2, y, buttonWidth, buttonHeight)
-                    .build());
-            addRenderableWidget(screen, Button.builder(Component.literal("Fetch"), b -> GardenProfitClient.runFetchAction())
-                    .bounds(startX + (buttonWidth + gap) * 3, y, buttonWidth, buttonHeight)
-                    .build());
-        });
 
         ConfigEntryBuilder entryBuilder = builder.entryBuilder();
 
@@ -54,6 +35,29 @@ public class HudEditScreen {
         // General Settings
         // ============================================================
         ConfigCategory general = builder.getOrCreateCategory(Component.literal("General"));
+
+        general.addEntry(new ActionButtonEntry(Component.literal("Toggle HUD"), GardenProfitClient::runToggleAction));
+        general.addEntry(new ActionButtonEntry(Component.literal("Price Mode"), GardenProfitClient::runPriceModeAction));
+        general.addEntry(new ActionButtonEntry(Component.literal("Fetch"), GardenProfitClient::runFetchAction));
+
+        general.addEntry(entryBuilder.startBooleanToggle(
+                        Component.literal("HUD Visible"),
+                        !GardenProfitConfig.hudHidden)
+                .setDefaultValue(!GardenProfitConfig.DEFAULT_HUD_HIDDEN)
+                .setTooltip(Component.literal("If off, all profit HUD overlays are hidden"))
+                .setSaveConsumer(val -> GardenProfitConfig.hudHidden = !val)
+                .build());
+
+        general.addEntry(entryBuilder.startBooleanToggle(
+                        Component.literal("Bazaar Price Mode: Insta-Sell"),
+                        GardenProfitConfig.useBazaarSellPrice)
+                .setDefaultValue(GardenProfitConfig.DEFAULT_USE_BAZAAR_SELL_PRICE)
+                .setTooltip(Component.literal("On = Insta-Sell price, Off = Insta-Buy price"))
+                .setSaveConsumer(val -> {
+                    GardenProfitConfig.useBazaarSellPrice = val;
+                    ProfitManager.onPriceModeChanged();
+                })
+                .build());
 
         general.addEntry(entryBuilder.startBooleanToggle(
                         Component.literal("Compact Profit Display"),
@@ -93,6 +97,8 @@ public class HudEditScreen {
         // ============================================================
         ConfigCategory sessionHud = builder.getOrCreateCategory(Component.literal("Session HUD"));
 
+        sessionHud.addEntry(new ActionButtonEntry(Component.literal("Reset Session"), GardenProfitClient::runResetAction));
+
         sessionHud.addEntry(entryBuilder.startBooleanToggle(
                         Component.literal("Show Session Profit HUD"),
                         GardenProfitConfig.showSessionProfitHud)
@@ -128,6 +134,8 @@ public class HudEditScreen {
         // Daily Profit HUD
         // ============================================================
         ConfigCategory dailyHud = builder.getOrCreateCategory(Component.literal("Daily HUD"));
+
+        dailyHud.addEntry(new ActionButtonEntry(Component.literal("Reset Daily"), GardenProfitClient::runResetDailyAction));
 
         dailyHud.addEntry(entryBuilder.startBooleanToggle(
                         Component.literal("Show Daily Profit HUD"),
@@ -165,6 +173,8 @@ public class HudEditScreen {
         // ============================================================
         ConfigCategory lifetimeHud = builder.getOrCreateCategory(Component.literal("Lifetime HUD"));
 
+        lifetimeHud.addEntry(new ActionButtonEntry(Component.literal("Reset Lifetime"), GardenProfitClient::runResetLifetimeAction));
+
         lifetimeHud.addEntry(entryBuilder.startBooleanToggle(
                         Component.literal("Show Lifetime Profit HUD"),
                         GardenProfitConfig.showLifetimeHud)
@@ -199,14 +209,61 @@ public class HudEditScreen {
         return builder.build();
     }
 
-    private static void addRenderableWidget(Screen screen, Button button) {
-        try {
-            Screens.getButtons(screen).add(button);
-        } catch (Exception e) {
-            if (!loggedButtonAddFailure) {
-                loggedButtonAddFailure = true;
-                GardenProfit.LOGGER.error("Failed to add config action button; continuing without this button.", e);
-            }
+    private static final class ActionButtonEntry extends TooltipListEntry<Object> {
+        private static final int BUTTON_WIDTH = 170;
+        private static final int BUTTON_HEIGHT = 20;
+
+        private final Button button;
+
+        private ActionButtonEntry(Component label, Runnable action) {
+            super(Component.empty(), () -> Optional.empty());
+            this.button = Button.builder(label, b -> action.run())
+                    .bounds(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT)
+                    .build();
+        }
+
+        @Override
+        public void render(
+                GuiGraphics graphics,
+                int index,
+                int y,
+                int x,
+                int entryWidth,
+                int entryHeight,
+                int mouseX,
+                int mouseY,
+                boolean hovered,
+                float delta
+        ) {
+            super.render(graphics, index, y, x, entryWidth, entryHeight, mouseX, mouseY, hovered, delta);
+            int buttonX = x + (entryWidth - BUTTON_WIDTH) / 2;
+            this.button.setPosition(buttonX, y);
+            this.button.render(graphics, mouseX, mouseY, delta);
+        }
+
+        @Override
+        public int getItemHeight() {
+            return BUTTON_HEIGHT;
+        }
+
+        @Override
+        public Object getValue() {
+            return null;
+        }
+
+        @Override
+        public Optional<Object> getDefaultValue() {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<? extends GuiEventListener> children() {
+            return List.of(button);
+        }
+
+        @Override
+        public List<? extends NarratableEntry> narratables() {
+            return List.of(button);
         }
     }
 }
