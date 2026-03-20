@@ -134,14 +134,16 @@ public class SackTracker {
             sackNames.putIfAbsent(change.itemName, change.sackName);
         }
 
-        // Only report net positive gains
+        // Report non-zero net changes (positive + negative).
+        // This allows visitor fulfillment and other sack removals to be tracked.
         for (Map.Entry<String, Integer> entry : netChanges.entrySet()) {
-            if (entry.getValue() > 0) {
+            if (entry.getValue() != 0) {
                 String itemName = entry.getKey();
                 int netDelta = entry.getValue();
 
-                // Skip items recently purchased from Bazaar (they are tracked as costs)
-                if (ProfitManager.isBazaarPurchaseIgnored(itemName)) {
+                // Skip recent Bazaar purchases only for positive adds
+                // (we still want to track negative removals, e.g. visitor usage).
+                if (netDelta > 0 && ProfitManager.isBazaarPurchaseIgnored(itemName)) {
                     Minecraft client = Minecraft.getInstance();
                     ClientUtils.sendDebugMessage(client,
                             "[Sack] Ignored bazaar purchase: +" + netDelta + " " + itemName);
@@ -151,8 +153,9 @@ public class SackTracker {
                 ProfitManager.getInstance().addSackDrop(itemName, netDelta);
 
                 Minecraft client = Minecraft.getInstance();
+                String signedDelta = (netDelta > 0 ? "+" : "") + netDelta;
                 ClientUtils.sendDebugMessage(client,
-                        "[Sack] +" + netDelta + " " + itemName
+                        "[Sack] " + signedDelta + " " + itemName
                                 + " (" + sackNames.getOrDefault(itemName, "?") + ")");
             }
         }
@@ -199,7 +202,7 @@ public class SackTracker {
         // Skip if we already processed this exact hover text in this message
         if (!seenHoverTexts.add(hoverText)) return;
 
-        // Only process "Added" sections (items going INTO sacks from farming)
+        // Process both Added and Removed sections.
         if (!hoverText.startsWith("Added") && !hoverText.startsWith("Removed")) {
             return;
         }

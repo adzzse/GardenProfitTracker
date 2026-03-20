@@ -4,7 +4,10 @@ import com.gardenprofit.mod.GardenProfitConfig;
 import com.gardenprofit.mod.util.ClientUtils;
 import net.minecraft.client.Minecraft;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -38,6 +41,7 @@ public final class ProfitManager {
 
     private static final Pattern STRIP_COLOR_PATTERN = Pattern.compile("(?i)\u00A7[0-9A-FK-OR]");
     private static final long PURSE_BASELINE_STABILIZE_MS = 3_000L;
+    private static final long PURSE_BASELINE_MAX_PENDING_MS = 12_000L;
 
     private long lastPurseBalance = -1;
     private boolean purseBaselinePending = true;
@@ -157,27 +161,21 @@ public final class ProfitManager {
             }
         }
 
-        String key = cleanName.startsWith("[Visitor] ") ? cleanName : "[Visitor] " + cleanName;
+        String key = cleanName.startsWith(ItemConstants.VISITOR_PREFIX) ? cleanName : ItemConstants.VISITOR_PREFIX + cleanName;
         long totalCount = count * multiplier;
 
         ProfitStorage.getInstance().checkDailyReset();
         ProfitState.getInstance().addVisitorGain(key, totalCount);
-        ProfitStorage.getInstance().saveLifetime();
-        ProfitStorage.getInstance().saveDaily();
     }
 
     public void addVisitorCost(long coinsSpent) {
         ProfitStorage.getInstance().checkDailyReset();
         ProfitState.getInstance().addVisitorCost(coinsSpent);
-        ProfitStorage.getInstance().saveLifetime();
-        ProfitStorage.getInstance().saveDaily();
     }
 
     public void addSprayCost(int quantity, long coins) {
         ProfitStorage.getInstance().checkDailyReset();
         ProfitState.getInstance().addSprayCost(quantity, coins);
-        ProfitStorage.getInstance().saveLifetime();
-        ProfitStorage.getInstance().saveDaily();
     }
 
     /** Delegates to ChatMessageParser for bazaar purchase ignore checking. */
@@ -209,14 +207,14 @@ public final class ProfitManager {
     }
 
     public static String getCategorizedName(String name) {
-        if (name.equals("[Spray] Sprayonator")) {
+        if (name.equals(ItemConstants.SPRAY_COST_KEY)) {
             return "\u00A7c\u00A7l[COST] \u00A7fSprayonator";
         }
-        if (name.equals("[Visitor] Visitor Cost")) {
+        if (name.equals(ItemConstants.VISITOR_COST_KEY) || name.equals(ItemConstants.VISITOR_COST_KEY_LEGACY)) {
             return "\u00A7c\u00A7l[COST] \u00A7fVisitor Cost";
         }
-        if (name.startsWith("[Visitor] ")) {
-            return "\u00A75\u00A7l[VISITOR] \u00A7f" + name.substring(10);
+        if (name.startsWith(ItemConstants.VISITOR_PREFIX)) {
+            return "\u00A75\u00A7l[VISITOR] \u00A7f" + name.substring(ItemConstants.VISITOR_PREFIX.length());
         }
 
         String color = "\u00A77";
@@ -255,16 +253,25 @@ public final class ProfitManager {
 
     public static Map<String, Long> getActiveDrops(String mode) {
         Map<String, Long> counts = ProfitState.getInstance().getCounts(mode);
-        return counts.entrySet().stream()
-                .filter(e -> !ItemConstants.isIgnoredItem(e.getKey()))
-                .sorted((e1, e2) -> {
-                    double p1 = BazaarFetcher.getInstance().getItemPrice(e1.getKey()) * e1.getValue();
-                    double p2 = BazaarFetcher.getInstance().getItemPrice(e2.getKey()) * e2.getValue();
-                    return Double.compare(p2, p1);
-                })
-                .collect(java.util.stream.Collectors.toMap(
-                        Map.Entry::getKey, Map.Entry::getValue,
-                        (v1, v2) -> v1, LinkedHashMap::new));
+        List<Map.Entry<String, Long>> rows = new ArrayList<>();
+        Map<String, Double> lineProfitCache = new HashMap<>();
+
+        for (Map.Entry<String, Long> entry : counts.entrySet()) {
+            if (ItemConstants.isIgnoredItem(entry.getKey())) continue;
+            rows.add(entry);
+            lineProfitCache.put(entry.getKey(),
+                    BazaarFetcher.getInstance().getItemPrice(entry.getKey()) * entry.getValue());
+        }
+
+        rows.sort((left, right) -> Double.compare(
+                lineProfitCache.getOrDefault(right.getKey(), 0.0),
+                lineProfitCache.getOrDefault(left.getKey(), 0.0)));
+
+        Map<String, Long> ordered = new LinkedHashMap<>();
+        for (Map.Entry<String, Long> entry : rows) {
+            ordered.put(entry.getKey(), entry.getValue());
+        }
+        return ordered;
     }
 
     public static Map<String, Long> getCompactDrops() { return getCompactDrops("session"); }
@@ -338,6 +345,7 @@ public final class ProfitManager {
         // Track purse changes
         long currentPurse = ClientUtils.getPurse(client);
         if (INSTANCE.purseBaselinePending) {
+            long pendingForMs = System.currentTimeMillis() - INSTANCE.purseBaselinePendingSince;
             if (currentPurse != -1) {
                 if (currentPurse == INSTANCE.pendingPurseCandidate) {
                     INSTANCE.pendingPurseStableReads++;
@@ -346,13 +354,16 @@ public final class ProfitManager {
                     INSTANCE.pendingPurseStableReads = 1;
                 }
 
-                long pendingForMs = System.currentTimeMillis() - INSTANCE.purseBaselinePendingSince;
                 if (INSTANCE.pendingPurseStableReads >= 2 || pendingForMs >= PURSE_BASELINE_STABILIZE_MS) {
                     INSTANCE.lastPurseBalance = currentPurse;
                     INSTANCE.purseBaselinePending = false;
                     ClientUtils.sendDebugMessage(client,
                             "[ProfitManager] Purse baseline finalized at " + currentPurse + ".");
                 }
+            } else if (pendingForMs >= PURSE_BASELINE_MAX_PENDING_MS) {
+                INSTANCE.purseBaselinePending = false;
+                ClientUtils.sendDebugMessage(client,
+                        "[ProfitManager] Purse baseline finalized without stable read; waiting for first valid purse value.");
             }
         } else if (currentPurse != -1) {
             if (INSTANCE.lastPurseBalance != -1 && currentPurse > INSTANCE.lastPurseBalance) {

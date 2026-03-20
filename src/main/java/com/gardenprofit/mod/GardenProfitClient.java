@@ -1,12 +1,15 @@
 package com.gardenprofit.mod;
 
 import com.gardenprofit.mod.gui.ProfitHudRenderer;
+import com.gardenprofit.mod.gui.ClickGuiScreen;
 import com.gardenprofit.mod.modules.ChatMessageParser;
 // import com.gardenprofit.mod.modules.InventoryTracker;
 import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.PetXpTracker;
 import com.gardenprofit.mod.modules.ProfitManager;
 import com.gardenprofit.mod.modules.SackTracker;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
@@ -14,15 +17,23 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.KeyMapping;
+import org.lwjgl.glfw.GLFW;
 
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 
 public class GardenProfitClient implements ClientModInitializer {
+    private enum PendingScreenAction {
+        NONE,
+        OPEN_CONFIG,
+        OPEN_HUD
+    }
 
     private static int tickCounter = 0;
 
-    private static boolean openConfigScreenNextTick = false;
+    private static KeyMapping openClickGuiKey;
+    private static PendingScreenAction pendingScreenAction = PendingScreenAction.NONE;
     private static Screen lastScreen = null;
 
     @Override
@@ -30,6 +41,12 @@ public class GardenProfitClient implements ClientModInitializer {
         GardenProfitConfig.load();
         ProfitManager.loadLifetime();
         ProfitManager.loadDaily();
+        openClickGuiKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
+                "key.gardenprofittracker.open_click_gui",
+                InputConstants.Type.KEYSYM,
+                GLFW.GLFW_KEY_RIGHT_SHIFT,
+                KeyMapping.Category.MISC
+        ));
 
         // Cache inventory/purse on world join
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
@@ -49,7 +66,7 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitHudRenderer.register();
         ProfitHudRenderer.startSession();
 
-        // Register chat message listener -- dispatch through EventDispatcher
+        // Register chat message listener (sack parsing first, then generic parsing)
         ClientReceiveMessageEvents.GAME.register((message, isOverlay) -> {
             if (isOverlay) return;
             // Only track drops/sacks while in the Garden
@@ -61,10 +78,17 @@ public class GardenProfitClient implements ClientModInitializer {
 
         // Register tick event for profit updates and inventory tracking
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (openConfigScreenNextTick) {
-                openConfigScreenNextTick = false;
-                net.minecraft.client.gui.screens.Screen screen = com.gardenprofit.mod.gui.HudEditScreen.create(client.screen);
-                client.setScreen(screen);
+            while (openClickGuiKey.consumeClick()) {
+                queueOpenHudEditor();
+            }
+
+            if (pendingScreenAction != PendingScreenAction.NONE) {
+                if (pendingScreenAction == PendingScreenAction.OPEN_HUD) {
+                    client.setScreen(new ClickGuiScreen(client.screen));
+                } else if (pendingScreenAction == PendingScreenAction.OPEN_CONFIG) {
+                    client.setScreen(com.gardenprofit.mod.gui.HudEditScreen.create(client.screen));
+                }
+                pendingScreenAction = PendingScreenAction.NONE;
             }
 
             if (client.player == null) return;
@@ -104,14 +128,50 @@ public class GardenProfitClient implements ClientModInitializer {
     private com.mojang.brigadier.builder.LiteralArgumentBuilder<net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource> buildCommandTree(String name) {
         return ClientCommandManager.literal(name)
             .executes(context -> {
-                openConfigScreenNextTick = true;
+                queueOpenAdvancedConfig();
                 return 1;
             })
+            .then(ClientCommandManager.literal("hud")
+                .executes(context -> {
+                    queueOpenHudEditor();
+                    return 1;
+                })
+            )
+            .then(ClientCommandManager.literal("settings")
+                .executes(context -> {
+                    queueOpenAdvancedConfig();
+                    return 1;
+                })
+            )
+            .then(ClientCommandManager.literal("config")
+                .executes(context -> {
+                    queueOpenAdvancedConfig();
+                    return 1;
+                })
+            )
             .then(ClientCommandManager.literal("reset")
                 .executes(context -> {
                     runResetAction();
                     return 1;
                 })
+                .then(ClientCommandManager.literal("session")
+                    .executes(context -> {
+                        runResetAction();
+                        return 1;
+                    })
+                )
+                .then(ClientCommandManager.literal("daily")
+                    .executes(context -> {
+                        runResetDailyAction();
+                        return 1;
+                    })
+                )
+                .then(ClientCommandManager.literal("lifetime")
+                    .executes(context -> {
+                        runResetLifetimeAction();
+                        return 1;
+                    })
+                )
             )
             .then(ClientCommandManager.literal("toggle")
                 .executes(context -> {
@@ -133,11 +193,29 @@ public class GardenProfitClient implements ClientModInitializer {
             );
     }
 
+    private static void queueOpenHudEditor() {
+        pendingScreenAction = PendingScreenAction.OPEN_HUD;
+    }
+
+    private static void queueOpenAdvancedConfig() {
+        pendingScreenAction = PendingScreenAction.OPEN_CONFIG;
+    }
+
     public static void runResetAction() {
         ProfitManager.resetSession();
         ProfitHudRenderer.startSession();
         LocationTracker.resetUptime();
         com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
+    }
+
+    public static void runResetDailyAction() {
+        ProfitManager.resetDaily();
+        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Daily data reset.");
+    }
+
+    public static void runResetLifetimeAction() {
+        ProfitManager.resetLifetime();
+        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Lifetime data reset.");
     }
 
     public static void runToggleAction() {

@@ -59,6 +59,7 @@ public final class ChatMessageParser {
     public static ChatMessageParser getInstance() { return INSTANCE; }
 
     public void handleChatMessage(Component component) {
+        purgeExpiredBazaarPurchaseIgnores();
         String text = toLegacyText(component);
 
         // PET DROP needs raw text to detect color-coded rarity
@@ -219,6 +220,11 @@ public final class ChatMessageParser {
             return false;
         }
         return true;
+    }
+
+    private void purgeExpiredBazaarPurchaseIgnores() {
+        long now = System.currentTimeMillis();
+        recentBazaarPurchases.entrySet().removeIf(entry -> entry.getValue() <= now);
     }
 
     // ── Text utilities ──────────────────────────────────────────────────
