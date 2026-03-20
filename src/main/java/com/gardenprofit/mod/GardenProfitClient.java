@@ -49,7 +49,7 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitHudRenderer.register();
         ProfitHudRenderer.startSession();
 
-        // Register chat message listener -- dispatch through EventDispatcher
+        // Register chat message listener (sack parsing first, then generic parsing)
         ClientReceiveMessageEvents.GAME.register((message, isOverlay) -> {
             if (isOverlay) return;
             // Only track drops/sacks while in the Garden

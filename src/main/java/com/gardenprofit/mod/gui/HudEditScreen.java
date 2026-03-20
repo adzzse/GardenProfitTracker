@@ -2,14 +2,15 @@ package com.gardenprofit.mod.gui;
 
 import com.gardenprofit.mod.GardenProfitClient;
 import com.gardenprofit.mod.GardenProfitConfig;
+import com.gardenprofit.mod.GardenProfit;
 import me.shedaniel.clothconfig2.api.ConfigBuilder;
 import me.shedaniel.clothconfig2.api.ConfigCategory;
 import me.shedaniel.clothconfig2.api.ConfigEntryBuilder;
+import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,6 +19,7 @@ import java.util.List;
  * Opened via /gardenprofit command.
  */
 public class HudEditScreen {
+    private static boolean loggedButtonAddFailure = false;
 
     public static Screen create(Screen parent) {
         ConfigBuilder builder = ConfigBuilder.create()
@@ -199,25 +201,12 @@ public class HudEditScreen {
 
     private static void addRenderableWidget(Screen screen, Button button) {
         try {
-            Method method = resolveAddRenderableWidgetMethod(button);
-            method.invoke(screen, button);
+            Screens.getButtons(screen).add(button);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to add config action button", e);
-        }
-    }
-
-    private static Method resolveAddRenderableWidgetMethod(Button button) throws NoSuchMethodException {
-        for (Method method : Screen.class.getDeclaredMethods()) {
-            if (!method.getName().equals("addRenderableWidget") || method.getParameterCount() != 1) {
-                continue;
-            }
-            Class<?> parameterType = method.getParameterTypes()[0];
-            if (parameterType.isAssignableFrom(button.getClass())) {
-                method.setAccessible(true);
-                return method;
+            if (!loggedButtonAddFailure) {
+                loggedButtonAddFailure = true;
+                GardenProfit.LOGGER.error("Failed to add config action button; continuing without this button.", e);
             }
         }
-
-        throw new NoSuchMethodException("No compatible addRenderableWidget overload for " + button.getClass().getName());
     }
 }

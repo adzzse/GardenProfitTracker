@@ -3,8 +3,10 @@ package com.gardenprofit.mod.gui;
 import java.util.Map;
 
 import com.gardenprofit.mod.GardenProfitConfig;
+import com.gardenprofit.mod.modules.ItemConstants;
 import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.ProfitManager;
+import com.gardenprofit.mod.modules.ProfitState;
 
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.Minecraft;
@@ -257,7 +259,14 @@ public class ProfitHudRenderer {
             scale = GardenProfitConfig.sessionProfitHudScale;
         }
         
-        int panelH = panelH(mode);
+        Map<String, Long> compactDrops = null;
+        Map<String, Long> drops = null;
+        if (GardenProfitConfig.compactProfitCalculator) {
+            compactDrops = ProfitManager.getCompactDrops(mode);
+        } else {
+            drops = ProfitManager.getActiveDrops(mode);
+        }
+        int panelH = panelH(mode, compactDrops, drops);
 
         g.pose().pushMatrix();
         g.pose().translate(x, y);
@@ -299,7 +308,6 @@ public class ProfitHudRenderer {
         rowY += 4;
 
         if (GardenProfitConfig.compactProfitCalculator) {
-            Map<String, Long> compactDrops = ProfitManager.getCompactDrops(mode);
             for (Map.Entry<String, Long> entry : compactDrops.entrySet()) {
                 if (entry.getValue() != 0) {
                     String label = ProfitManager.getCompactCategoryLabel(entry.getKey());
@@ -309,7 +317,6 @@ public class ProfitHudRenderer {
                 }
             }
         } else {
-            Map<String, Long> drops = ProfitManager.getActiveDrops(mode);
             for (Map.Entry<String, Long> entry : drops.entrySet()) {
                 String itemName = entry.getKey();
                 long count = entry.getValue();
@@ -318,11 +325,12 @@ public class ProfitHudRenderer {
 
                 String categorizedName = ProfitManager.getCategorizedName(itemName);
                 String countDisplay;
-                if (itemName.equals("[Spray] Sprayonator")) {
+                if (itemName.equals(ItemConstants.SPRAY_COST_KEY)) {
                     long sprayQty = ProfitManager.getSprayQuantity(mode);
                     countDisplay = "x" + String.format("%,d", sprayQty);
-                } else if (itemName.equals("[Visitor] Visitor Cost")) {
-                    long costCount = com.gardenprofit.mod.modules.ProfitState.getInstance().getCounts(mode).getOrDefault("[Visitor] Visitor Cost Count", 0L);
+                } else if (itemName.equals(ItemConstants.VISITOR_COST_KEY) || itemName.equals(ItemConstants.VISITOR_COST_KEY_LEGACY)) {
+                    long costCount = ProfitState.getInstance().getCounts(mode)
+                            .getOrDefault(ItemConstants.VISITOR_COST_COUNT_KEY, 0L);
                     countDisplay = costCount > 0 ? "x" + String.format("%,d", costCount) : "";
                 } else if (itemName.startsWith("Pet XP (")) {
                     countDisplay = String.format("%,d XP", count);
@@ -333,9 +341,11 @@ public class ProfitHudRenderer {
                 String valueText = formatProfit(lineProfit);
 
                 int color;
-                if (itemName.equals("[Visitor] Visitor Cost") || itemName.equals("[Spray] Sprayonator")) {
+                if (itemName.equals(ItemConstants.VISITOR_COST_KEY)
+                        || itemName.equals(ItemConstants.VISITOR_COST_KEY_LEGACY)
+                        || itemName.equals(ItemConstants.SPRAY_COST_KEY)) {
                     color = 0xFFFF5555; // red for costs
-                } else if (itemName.startsWith("[Visitor] ")) {
+                } else if (itemName.startsWith(ItemConstants.VISITOR_PREFIX)) {
                     color = 0xFFFFFF55; // yellow for visitor gains
                 } else {
                     color = ProfitManager.isPredefinedTrackedItem(itemName) ? 0xFFFFFF55 : VALUE_COLOR;
@@ -373,14 +383,13 @@ public class ProfitHudRenderer {
         g.pose().popMatrix();
     }
 
-    private static int panelH(String mode) {
+    private static int panelH(String mode, Map<String, Long> compactDrops, Map<String, Long> drops) {
         int baseH = PADDING_V + FONT_H + 3 + 4;
         int itemCount = 0;
         if (GardenProfitConfig.compactProfitCalculator) {
-            Map<String, Long> compactDrops = ProfitManager.getCompactDrops(mode);
-            itemCount = (int) compactDrops.values().stream().filter(v -> v != 0).count();
+            itemCount = compactDrops == null ? 0 : (int) compactDrops.values().stream().filter(v -> v != 0).count();
         } else {
-            itemCount = ProfitManager.getActiveDrops(mode).size();
+            itemCount = drops == null ? 0 : drops.size();
         }
 
         if (itemCount > 0) {
@@ -390,6 +399,13 @@ public class ProfitHudRenderer {
             baseH += ROW_HEIGHT + PADDING_V; // Show at least one empty row or just the title
         }
         return baseH;
+    }
+
+    private static int panelH(String mode) {
+        if (GardenProfitConfig.compactProfitCalculator) {
+            return panelH(mode, ProfitManager.getCompactDrops(mode), null);
+        }
+        return panelH(mode, null, ProfitManager.getActiveDrops(mode));
     }
 
     private static void drawRow(GuiGraphics g, Minecraft client, int y, String label, String value, int valueColor) {

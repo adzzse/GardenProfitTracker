@@ -48,14 +48,15 @@ public final class ProfitState {
         sessionCounts.merge(key, count, Long::sum);
         dailyCounts.merge(key, count, Long::sum);
         lifetimeCounts.merge(key, count, Long::sum);
+        needsSave = true;
     }
 
     /**
      * Subtracts visitor cost from all tiers and increments the count.
      */
     public void addVisitorCost(long coinsSpent) {
-        String key = "[Visitor] Visitor";
-        String countKey = "[Visitor] Visitor Count";
+        String key = ItemConstants.VISITOR_COST_KEY;
+        String countKey = ItemConstants.VISITOR_COST_COUNT_KEY;
         
         sessionCounts.merge(key, -coinsSpent, Long::sum);
         dailyCounts.merge(key, -coinsSpent, Long::sum);
@@ -64,19 +65,21 @@ public final class ProfitState {
         sessionCounts.merge(countKey, 1L, Long::sum);
         dailyCounts.merge(countKey, 1L, Long::sum);
         lifetimeCounts.merge(countKey, 1L, Long::sum);
+        needsSave = true;
     }
 
     /**
      * Subtracts spray cost from all tiers and increments quantity counters.
      */
     public void addSprayCost(int quantity, long coins) {
-        String key = "[Spray] Sprayonator";
+        String key = ItemConstants.SPRAY_COST_KEY;
         spraySessionQuantity += quantity;
         sprayDailyQuantity += quantity;
         sprayLifetimeQuantity += quantity;
         sessionCounts.merge(key, -coins, Long::sum);
         dailyCounts.merge(key, -coins, Long::sum);
         lifetimeCounts.merge(key, -coins, Long::sum);
+        needsSave = true;
     }
 
     // ── Getters ─────────────────────────────────────────────────────────

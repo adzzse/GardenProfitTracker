@@ -13,6 +13,16 @@ public final class ItemConstants {
 
     private ItemConstants() {} // Utility class
 
+    // Canonical internal ledger keys
+    public static final String SPRAY_COST_KEY = "[Spray] Sprayonator";
+    public static final String VISITOR_PREFIX = "[Visitor] ";
+    public static final String VISITOR_COST_KEY = "[Visitor] Visitor Cost";
+    public static final String VISITOR_COST_COUNT_KEY = "[Visitor] Visitor Cost Count";
+    // Legacy keys kept for backward-compatibility during migration
+    public static final String VISITOR_COST_KEY_LEGACY = "[Visitor] Visitor";
+    public static final String VISITOR_SERVICES_KEY_LEGACY = "[Visitor] Visitors Served";
+    public static final String VISITOR_COUNT_KEY_LEGACY = "[Visitor] Visitor Count";
+
     // ── Item Category Sets ──────────────────────────────────────────────
 
     public static final Set<String> CROPS = Set.of(
@@ -174,7 +184,7 @@ public final class ItemConstants {
             Map.entry("Fermento", "FERMENTO"),
             Map.entry("Helianthus", "HELIANTHUS"),
 
-            Map.entry("Tool Exp Capsule", "TOOL_EXP_CAPSULE"),
+            Map.entry("Tool EXP Capsule", "TOOL_EXP_CAPSULE"),
             Map.entry("ENCHANTMENT_GREEN_THUMB_1", "ENCHANTMENT_GREEN_THUMB_1"),
 
             // Visitor / Rare Drops Mappings
@@ -231,8 +241,9 @@ public final class ItemConstants {
      */
     public static boolean isIgnoredItem(String name) {
         if (name == null) return false;
-        if (name.equals("[Visitor] Visitors Served")) return true;
-        if (name.equals("[Visitor] Visitor Cost Count")) return true;
+        if (name.equals(VISITOR_SERVICES_KEY_LEGACY)) return true;
+        if (name.equals(VISITOR_COUNT_KEY_LEGACY)) return true;
+        if (name.equals(VISITOR_COST_COUNT_KEY)) return true;
         String lower = name.toLowerCase();
         return lower.contains("rune") || lower.endsWith("vinyl") || lower.equals("vinyl");
     }
@@ -264,8 +275,8 @@ public final class ItemConstants {
      * Returns the item category for display/grouping purposes.
      */
     public static String getCategory(String name) {
-        if (name.equals("[Spray] Sprayonator") || name.equals("[Visitor] Visitor Cost")) return "Costs";
-        if (name.startsWith("[Visitor] ")) return "Visitor";
+        if (name.equals(SPRAY_COST_KEY) || name.equals(VISITOR_COST_KEY) || name.equals(VISITOR_COST_KEY_LEGACY)) return "Costs";
+        if (name.startsWith(VISITOR_PREFIX)) return "Visitor";
         if (isCropItem(name)) return "Crops";
         if (PEST_ITEMS.contains(name)) return "Pest Items";
         if (PETS.contains(name)) return "Pets";

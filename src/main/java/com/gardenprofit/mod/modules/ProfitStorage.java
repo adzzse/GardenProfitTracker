@@ -12,7 +12,8 @@ import java.lang.reflect.Type;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Handles all JSON file persistence (load/save) and daily-reset logic
@@ -38,6 +39,11 @@ public final class ProfitStorage {
             .getConfigDir().resolve("gardenprofit_bazaar_cache.json").toFile();
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final ExecutorService IO_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "GardenProfit-StorageIO");
+        t.setDaemon(true);
+        return t;
+    });
 
     private String lastDailyResetDate = getCurrentDateString();
 
@@ -50,7 +56,7 @@ public final class ProfitStorage {
     public void saveLifetime() {
         ensureConfigDir();
         Map<String, Long> copy = new LinkedHashMap<>(ProfitState.getInstance().getCounts("lifetime"));
-        CompletableFuture.runAsync(() -> {
+        IO_EXECUTOR.execute(() -> {
             try (FileWriter writer = new FileWriter(LIFETIME_FILE)) {
                 GSON.toJson(copy, writer);
             } catch (IOException e) {
@@ -65,7 +71,7 @@ public final class ProfitStorage {
         try (FileReader reader = new FileReader(LIFETIME_FILE)) {
             Type type = new TypeToken<Map<String, Long>>() {}.getType();
             Map<String, Long> data = GSON.fromJson(reader, type);
-            ProfitState.getInstance().setLifetimeCounts(data);
+            ProfitState.getInstance().setLifetimeCounts(migrateLegacyLedgerKeys(data));
         } catch (Exception e) {
             System.err.println("[GardenProfit] Failed to load lifetime profit data: " + e.getMessage());
         }
@@ -80,7 +86,7 @@ public final class ProfitStorage {
                 ProfitState.getInstance().getSprayQuantity("daily"),
                 lastDailyResetDate
         );
-        CompletableFuture.runAsync(() -> {
+        IO_EXECUTOR.execute(() -> {
             try (FileWriter writer = new FileWriter(DAILY_FILE)) {
                 GSON.toJson(data, writer);
             } catch (IOException e) {
@@ -101,7 +107,7 @@ public final class ProfitStorage {
                     lastDailyResetDate = getCurrentDateString();
                     saveDaily();
                 } else {
-                    ProfitState.getInstance().setDailyCounts(data.counts);
+                    ProfitState.getInstance().setDailyCounts(migrateLegacyLedgerKeys(data.counts));
                     ProfitState.getInstance().setSprayDailyQuantity(data.sprayQuantity);
                 }
             }
@@ -246,5 +252,29 @@ public final class ProfitStorage {
                 System.out.println("[GardenProfit] Migrated " + oldFile.getName() + " -> " + newFile.getPath());
             }
         }
+    }
+
+    private static Map<String, Long> migrateLegacyLedgerKeys(Map<String, Long> input) {
+        Map<String, Long> normalized = new LinkedHashMap<>();
+        if (input == null) {
+            return normalized;
+        }
+
+        for (Map.Entry<String, Long> entry : input.entrySet()) {
+            String key = entry.getKey();
+            long value = entry.getValue() == null ? 0L : entry.getValue();
+
+            if (ItemConstants.VISITOR_COST_KEY_LEGACY.equals(key)) {
+                normalized.merge(ItemConstants.VISITOR_COST_KEY, value, Long::sum);
+                continue;
+            }
+            if (ItemConstants.VISITOR_COUNT_KEY_LEGACY.equals(key) || ItemConstants.VISITOR_SERVICES_KEY_LEGACY.equals(key)) {
+                normalized.merge(ItemConstants.VISITOR_COST_COUNT_KEY, value, Long::sum);
+                continue;
+            }
+            normalized.merge(key, value, Long::sum);
+        }
+
+        return normalized;
     }
 }
