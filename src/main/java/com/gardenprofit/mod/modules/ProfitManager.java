@@ -161,6 +161,10 @@ public final class ProfitManager {
             }
         }
 
+        if (ItemConstants.isIgnoredVisitorReward(cleanName)) {
+            return;
+        }
+
         String key = cleanName.startsWith(ItemConstants.VISITOR_PREFIX) ? cleanName : ItemConstants.VISITOR_PREFIX + cleanName;
         long totalCount = count * multiplier;
 

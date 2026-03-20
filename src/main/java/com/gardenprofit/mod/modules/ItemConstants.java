@@ -67,6 +67,8 @@ public final class ItemConstants {
             "Thunderling", "Turtlellini", "Zombud", "All-in Aloe", "Devourer",
             "Glasscorn", "Godseed", "Jerryflower", "Phantomleaf", "Timestalk",
             "Tool EXP Capsule", "Pet XP", "Jacob's Ticket", "Carnival Ticket", "Purse");
+    private static final Set<String> IGNORED_VISITOR_REWARD_KEYS = Set.of(
+            normalizeItemKey("Jacob's Ticket"));
 
     // ── Fallback Prices (NPC / pre-bazaar values) ───────────────────────
     public static final Map<String, Double> TRACKED_ITEMS = Map.ofEntries(
@@ -312,6 +314,14 @@ public final class ItemConstants {
     public static boolean isCropItem(String itemName) {
         if (itemName == null) return false;
         return CROP_KEYS.contains(normalizeItemKey(itemName));
+    }
+
+    /**
+     * Returns true if this visitor reward should be ignored for visitor-ledger tracking.
+     */
+    public static boolean isIgnoredVisitorReward(String itemName) {
+        if (itemName == null || itemName.isBlank()) return false;
+        return IGNORED_VISITOR_REWARD_KEYS.contains(normalizeItemKey(itemName));
     }
 
     /**
