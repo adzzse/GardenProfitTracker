@@ -2,7 +2,6 @@ package com.gardenprofit.mod;
 
 import com.gardenprofit.mod.gui.ProfitHudRenderer;
 import com.gardenprofit.mod.modules.ChatMessageParser;
-import com.gardenprofit.mod.modules.EventDispatcher;
 // import com.gardenprofit.mod.modules.InventoryTracker;
 import com.gardenprofit.mod.modules.LocationTracker;
 import com.gardenprofit.mod.modules.PetXpTracker;
@@ -12,6 +11,8 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.Minecraft;
 
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -22,6 +23,7 @@ public class GardenProfitClient implements ClientModInitializer {
     private static int tickCounter = 0;
 
     private static boolean openConfigScreenNextTick = false;
+    private static Screen lastScreen = null;
 
     @Override
     public void onInitializeClient() {
@@ -29,18 +31,12 @@ public class GardenProfitClient implements ClientModInitializer {
         ProfitManager.loadLifetime();
         ProfitManager.loadDaily();
 
-        // Register prioritized event handlers via EventDispatcher
-        // T0 = SackTracker, T1 = ChatMessageParser, T2 = InventoryTracker
-        EventDispatcher dispatcher = EventDispatcher.getInstance();
-        dispatcher.register(SackTracker.getInstance());
-        dispatcher.register(ChatMessageParser.getInstance());
-        //dispatcher.register(InventoryTracker.getInstance());
-
         // Cache inventory/purse on world join
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
         //    InventoryTracker.onWorldSwitch();
             LocationTracker.onWorldSwitch();
             ProfitManager.onWorldSwitch(client);
+            lastScreen = client.screen;
         });
 
         // Register /gardenprofit and /gp commands
@@ -58,8 +54,9 @@ public class GardenProfitClient implements ClientModInitializer {
             if (isOverlay) return;
             // Only track drops/sacks while in the Garden
             if (!LocationTracker.isInGarden()) return;
-            // Dispatch to T0 (SackTracker) -> T1 (ChatMessageParser)
-            EventDispatcher.getInstance().dispatchChatMessage(message);
+            // Fixed order: sack parsing first, then generic chat parsing.
+            SackTracker.handleChatMessage(message);
+            ChatMessageParser.getInstance().handleChatMessage(message);
         });
 
         // Register tick event for profit updates and inventory tracking
@@ -72,6 +69,17 @@ public class GardenProfitClient implements ClientModInitializer {
 
             if (client.player == null) return;
 
+            Screen currentScreen = client.screen;
+            if (currentScreen != lastScreen) {
+                if (lastScreen instanceof AbstractContainerScreen<?>) {
+                    SackTracker.getInstance().onInventoryClose();
+                }
+                if (currentScreen instanceof AbstractContainerScreen<?> handledScreen) {
+                    SackTracker.getInstance().onInventoryOpen(handledScreen.getTitle().getString());
+                }
+                lastScreen = currentScreen;
+            }
+
             tickCounter++;
 
             // Update location detection every 20 ticks
@@ -81,9 +89,6 @@ public class GardenProfitClient implements ClientModInitializer {
 
             // Only run tracking modules while in the Garden
             if (!LocationTracker.isInGarden()) return;
-
-            // Dispatch tick events through EventDispatcher (InventoryTracker runs at T2)
-            EventDispatcher.getInstance().dispatchTick(client);
 
             // Update profit (purse tracking) every 5 ticks
             if (tickCounter % 5 == 0) {
@@ -104,47 +109,63 @@ public class GardenProfitClient implements ClientModInitializer {
             })
             .then(ClientCommandManager.literal("reset")
                 .executes(context -> {
-                    ProfitManager.resetSession();
-                    ProfitHudRenderer.startSession();
-                    LocationTracker.resetUptime();
-                    com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
+                    runResetAction();
                     return 1;
                 })
             )
             .then(ClientCommandManager.literal("toggle")
                 .executes(context -> {
-                    GardenProfitConfig.hudHidden = !GardenProfitConfig.hudHidden;
-                    GardenProfitConfig.save();
-                    String status = GardenProfitConfig.hudHidden ? "\u00A7cHidden" : "\u00A7aVisible";
-                    if (Minecraft.getInstance().player != null) {
-                        Minecraft.getInstance().player.displayClientMessage(
-                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD: " + status), false);
-                    }
+                    runToggleAction();
                     return 1;
                 })
             )
             .then(ClientCommandManager.literal("pricemode")
                 .executes(context -> {
-                    GardenProfitConfig.useBazaarSellPrice = !GardenProfitConfig.useBazaarSellPrice;
-                    GardenProfitConfig.save();
-                    String mode = GardenProfitConfig.useBazaarSellPrice ? "Insta-Sell" : "Insta-Buy";
-                    if (Minecraft.getInstance().player != null) {
-                        Minecraft.getInstance().player.displayClientMessage(
-                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] Bazaar price mode: \u00A7e" + mode + "\u00A7a. Re-fetching prices..."), false);
-                    }
-                    ProfitManager.fetchBazaarPrices();
+                    runPriceModeAction();
                     return 1;
                 })
             )
             .then(ClientCommandManager.literal("fetch")
                 .executes(context -> {
-                    if (Minecraft.getInstance().player != null) {
-                        Minecraft.getInstance().player.displayClientMessage(
-                            net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] \u00A7eManually fetching prices..."), false);
-                    }
-                    ProfitManager.fetchBazaarPrices();
+                    runFetchAction();
                     return 1;
                 })
             );
+    }
+
+    public static void runResetAction() {
+        ProfitManager.resetSession();
+        ProfitHudRenderer.startSession();
+        LocationTracker.resetUptime();
+        com.gardenprofit.mod.util.ClientUtils.sendDebugMessage(Minecraft.getInstance(), "Session reset.");
+    }
+
+    public static void runToggleAction() {
+        GardenProfitConfig.hudHidden = !GardenProfitConfig.hudHidden;
+        GardenProfitConfig.save();
+        String status = GardenProfitConfig.hudHidden ? "\u00A7cHidden" : "\u00A7aVisible";
+        if (Minecraft.getInstance().player != null) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] HUD: " + status), false);
+        }
+    }
+
+    public static void runPriceModeAction() {
+        GardenProfitConfig.useBazaarSellPrice = !GardenProfitConfig.useBazaarSellPrice;
+        GardenProfitConfig.save();
+        String mode = GardenProfitConfig.useBazaarSellPrice ? "Insta-Sell" : "Insta-Buy";
+        if (Minecraft.getInstance().player != null) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] Bazaar price mode: \u00A7e" + mode), false);
+        }
+        ProfitManager.onPriceModeChanged();
+    }
+
+    public static void runFetchAction() {
+        if (Minecraft.getInstance().player != null) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal("\u00A7a[GardenProfit] \u00A7eManually fetching prices..."), false);
+        }
+        ProfitManager.fetchBazaarPrices();
     }
 }

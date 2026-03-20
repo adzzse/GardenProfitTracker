@@ -27,15 +27,15 @@ public class ClientUtils {
 
     public static long getPurse(Minecraft client) {
         if (client.level == null || client.player == null)
-            return 0;
+            return -1;
 
         Scoreboard scoreboard = client.level.getScoreboard();
         if (scoreboard == null)
-            return 0;
+            return -1;
 
         Objective sidebar = scoreboard.getDisplayObjective(DisplaySlot.SIDEBAR);
         if (sidebar == null)
-            return 0;
+            return -1;
 
         Collection<PlayerScoreEntry> scores = scoreboard.listPlayerScores(sidebar);
         for (PlayerScoreEntry entry : scores) {

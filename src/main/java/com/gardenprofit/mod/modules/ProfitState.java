@@ -54,8 +54,8 @@ public final class ProfitState {
      * Subtracts visitor cost from all tiers and increments the count.
      */
     public void addVisitorCost(long coinsSpent) {
-        String key = "[Visitor] Visitor Cost";
-        String countKey = "[Visitor] Visitor Cost Count";
+        String key = "[Visitor] Visitor";
+        String countKey = "[Visitor] Visitor Count";
         
         sessionCounts.merge(key, -coinsSpent, Long::sum);
         dailyCounts.merge(key, -coinsSpent, Long::sum);

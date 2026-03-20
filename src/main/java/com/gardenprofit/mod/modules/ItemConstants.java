@@ -1,7 +1,9 @@
 package com.gardenprofit.mod.modules;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Single source of truth for all item names, prices, and bazaar mappings
@@ -29,6 +31,9 @@ public final class ItemConstants {
             "Sunflower", "Enchanted Sunflower", "Compacted Sunflower",
             "Moonflower", "Enchanted Moonflower", "Compacted Moonflower",
             "Wild Rose", "Enchanted Wild Rose", "Compacted Wild Rose");
+    private static final Set<String> CROP_KEYS = CROPS.stream()
+            .map(ItemConstants::normalizeItemKey)
+            .collect(Collectors.toUnmodifiableSet());
 
     public static final Set<String> PEST_ITEMS = Set.of(
             "Beady Eyes", "Chirping Stereo", "Sunder VI Book", "Clipped Wings",
@@ -170,7 +175,7 @@ public final class ItemConstants {
             Map.entry("Helianthus", "HELIANTHUS"),
 
             Map.entry("Tool Exp Capsule", "TOOL_EXP_CAPSULE"),
-            Map.entry("Green Thumb 1 Enchant", "ENCHANTMENT_GREEN_THUMB_1"),
+            Map.entry("ENCHANTMENT_GREEN_THUMB_1", "ENCHANTMENT_GREEN_THUMB_1"),
 
             // Visitor / Rare Drops Mappings
             Map.entry("Overgrown Grass", "OVERGROWN_GRASS"),
@@ -248,15 +253,27 @@ public final class ItemConstants {
     }
 
     /**
+     * Returns true if the item is a crop (case-insensitive).
+     */
+    public static boolean isCropItem(String itemName) {
+        if (itemName == null) return false;
+        return CROP_KEYS.contains(normalizeItemKey(itemName));
+    }
+
+    /**
      * Returns the item category for display/grouping purposes.
      */
     public static String getCategory(String name) {
         if (name.equals("[Spray] Sprayonator") || name.equals("[Visitor] Visitor Cost")) return "Costs";
         if (name.startsWith("[Visitor] ")) return "Visitor";
-        if (CROPS.contains(name)) return "Crops";
+        if (isCropItem(name)) return "Crops";
         if (PEST_ITEMS.contains(name)) return "Pest Items";
         if (PETS.contains(name)) return "Pets";
         if (MISC_DROPS.contains(name) || name.toLowerCase().startsWith("pet xp (")) return "Misc";
         return "Others";
+    }
+
+    private static String normalizeItemKey(String itemName) {
+        return itemName.trim().toLowerCase(Locale.ROOT);
     }
 }
