@@ -26,11 +26,11 @@ public class ProfitHudRenderer {
     private static final int CORNER_RADIUS = 6;
 
     private static final int BG_COLOR_RGB = 0x141424;
-    private static final int SEP_COLOR_RGB = 0x4A4A88;
+    private static final int SEP_COLOR_RGB = 0x141424;
     private static final int TITLE_COLOR = 0xFFFFFFFF;
     private static final int LABEL_COLOR = 0xFFAAAAAA;
     private static final int VALUE_COLOR = 0xFFFFFFFF;
-    private static final int BORDER_IDLE_RGB = 0x6464B4;
+    private static final int BORDER_IDLE_RGB = 0xFFFFFFFF;
     private static final int BORDER_DRAG = 0xFFAAAAFF;
 
     private static int applyOpacity(int rgb) {
